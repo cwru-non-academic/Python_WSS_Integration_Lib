@@ -1,7 +1,7 @@
 """Configuration helpers for the wrapper.
 
 The main responsibility of this module is locating the ``Cs_Libraries/`` folder and
-providing a small immutable configuration object used by :class:`~wss_py_wrapper.stimulation_controller.StimulationController`.
+providing a small immutable confinguration object used by :class:`~wss_py_wrapper.stimulation_controller.StimulationController`.
 """
 
 from __future__ import annotations
