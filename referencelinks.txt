@@ -1,0 +1,8 @@
+Git:
+https://github.com/cwru-non-academic/HFI_WSS_Python_Interface/tree/main#
+
+Docs:
+https://cwru-non-academic.github.io/WSS_Documentation/
+
+PyQt:
+https://www.riverbankcomputing.com/static/Docs/PyQt6/index.html
