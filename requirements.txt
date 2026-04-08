@@ -1,5 +1,6 @@
-cffi==1.17.1
-clr-loader==0.2.8
-pycparser==2.23
-pyserial==3.5
-pythonnet==3.0.5
+# Convenience requirements for working on this repo directly.
+# Runtime package metadata lives in pyproject.toml.
+
+pythonnet>=3.0.0
+build>=1.2.0
+sphinx>=7.0.0

@@ -20,6 +20,7 @@ All documentation about the API and related implementations can be found in [Git
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
+python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
@@ -55,6 +56,7 @@ In an application repo, add this repository as a submodule and install it from t
 
 ```bash
 git submodule add <repo-url> external/wss-py-wrapper
+python -m pip install -r external/wss-py-wrapper/requirements.txt
 python -m pip install -e external/wss-py-wrapper
 ```
 
