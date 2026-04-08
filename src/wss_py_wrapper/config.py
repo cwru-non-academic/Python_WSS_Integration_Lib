@@ -46,6 +46,7 @@ class WssConfig:
     :param max_setup_tries: Maximum number of setup retries used by the .NET core.
     :param tick_interval_ms: Background tick interval in milliseconds.
     """
+
     config_path: Path
     log_path: Path
     cs_lib_dir: Path

@@ -1,138 +1,86 @@
 
-# WSS Py Wrapper
+# wss-py-wrapper
 
-Python wrapper for the HFI_WSS_Interface library.
+Python wrapper around the HFI_WSS_Interface .NET library using `pythonnet`.
 
-All documentation about the API and other implementations can be found in [GitHub Pages](https://cwru-non-academic.github.io/WSS_Documentation/).
+This repository is the reusable wrapper/library repo. It is intended to be consumed directly as a Python package or included from another repository as a git submodule.
 
-## Quick start
+All documentation about the API and related implementations can be found in [GitHub Pages](https://cwru-non-academic.github.io/WSS_Documentation/).
 
-1) Ensure the C# DLLs are present:
+## Repository Layout
 
-```
-../Cs_Libraries/WSS_Core_Interface.dll
-```
+- `src/wss_py_wrapper/`: Python package source
+- `docs/`: Sphinx documentation config
+- `Config/`: default configuration assets bundled with the repo
+- `Cs_Libraries/`: canonical bundled .NET runtime dependencies and WSS DLLs
 
-You can find them in HFI_WSS_Interface: https://github.com/cwru-non-academic/WSSCoreInterface/releases
+## Install
 
-2) Create a venv and install the package:
-
-```
-cd .../WSS_Python_Wrapper/WSS_Py_Wrapper
-python -m venv .venv
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 ```
 
-3) Run the CLI:
+## Runtime Prerequisites
 
-```
-python -m wss_py_wrapper.cli --help
-python -m wss_py_wrapper.cli --test
-```
+- Python 3.9+
+- The bundled `Cs_Libraries/` directory must be present in the repository
 
-## OS-specific setup
+DLL discovery walks upward looking for `Cs_Libraries/` from the package location. Keeping `Cs_Libraries/` in this repository makes the repo self-contained when used as a submodule.
 
-### Linux
+## Library Usage
 
-Install prerequisites (venv + Mono):
+```python
+from pathlib import Path
 
-```
-sudo apt update
-sudo apt install python3.10-venv mono-complete
-```
+from wss_py_wrapper import StimulationController, WssConfig
 
-Serial permissions:
 
-The device node is usually owned by the `dialout` group (example: `/dev/ttyACM0`).
-Add your user to the group, then log out/in:
+config = WssConfig.default(Path(__file__))
+controller = StimulationController(config)
+controller.Initialize()
 
-```
-sudo usermod -aG dialout $USER
-```
+controller.StartStimulation()
+controller.StimWithMode("index", 0.25)
+controller.StopStimulation()
 
-To see which group owns the device on your system:
-
-```
-ls -l /dev/ttyACM* /dev/ttyUSB*
+controller.Shutdown()
 ```
 
-Add yourself to the listed group if it is not `dialout`.
+## Submodule Usage
 
-### Windows
+In an application repo, add this repository as a submodule and install it from the submodule path:
 
-Install Python 3.9+ and the .NET runtime, then use the Windows venv activation:
-
-```
-cd .../WSS_Python_Wrapper/WSS_Py_Wrapper
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -U pip
-python -m pip install -e .
+```bash
+git submodule add <repo-url> external/wss-py-wrapper
+python -m pip install -e external/wss-py-wrapper
 ```
 
-Run the CLI:
+The application repo should own its CLI and other app-specific orchestration, while importing `WssConfig` and `StimulationController` from this package.
 
-```
-python -m wss_py_wrapper.cli --help
-```
+## Development
 
-## Quick start (no install)
+Formatting/lint/type-check:
 
-```
-cd .../WSS_Python_Wrapper
-python3.10 -m venv WSS_Py_Wrapper/.venv
-source WSS_Py_Wrapper/.venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e WSS_Py_Wrapper
-
-PYTHONPATH=./WSS_Py_Wrapper/src python -m wss_py_wrapper.cli --test
+```bash
+python -m pip install -U ruff mypy
+python -m ruff format src
+python -m ruff check src
+python -m mypy src/wss_py_wrapper
 ```
 
-## Run every time
+Build docs:
 
-```
-source WSS_Py_Wrapper/.venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
-PYTHONPATH=./WSS_Py_Wrapper/src python -m wss_py_wrapper.cli
-```
-
-## CLI usage
-
-Run:
-
-```
-python -m wss_py_wrapper.cli [options]
+```bash
+python -m pip install -e ".[docs]"
+sphinx-build -b html docs docs/_build/html
 ```
 
-Options:
-- `--serial=NAME` Fully qualified serial device (auto-detect if omitted).
-- `--config=PATH` Config directory path (defaults to `./Config` under your current working directory).
-- `--max-retries=N` Max setup retries (default `5`).
-- `--tick=MS` Tick interval in milliseconds (default `10`).
-- `--test` Enable simulated transport.
-- `--help` Show usage.
+Build package:
 
-Interactive commands:
-- `help`, `start`, `stop`, `status`, `quit`/`exit`
-- `stim <finger|chX> <magnitude>`
-- `analog <finger|chX> <pw> [amp] [ipi]`
-- `reload-core`, `reload-params [path]`, `save-params`
-
-## Logging
-
-Console output:
-- Startup status (config path, serial selection, readiness).
-- Command responses and errors from the interactive loop.
-
-Log file output:
-- C# log messages routed via `Log.SetSink(...)` into a file.
-- Each line is timestamped: `[YYYY-MM-DD HH:MM:SS] LEVEL: message`.
-
-Default log file location:
-- A file named like `wss_YYYYMMDD_HHMMSS.log` alongside the Python module:
-  `WSS_Py_Wrapper/src/wss_py_wrapper/wss_YYYYMMDD_HHMMSS.log`
-
-Change log file location:
-- Edit `WSS_Py_Wrapper/src/wss_py_wrapper/config.py` and update `WssConfig.default()` to set a different `log_path`.
-- Or construct `WssConfig` yourself and pass it to `StimulationController` in your own script.
+```bash
+python -m pip install -U build
+python -m build
+```

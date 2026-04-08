@@ -7,7 +7,7 @@ Rules discovery: no Cursor rules (`.cursor/rules/` or `.cursorrules`) and no Cop
 - Package source: `src/wss_py_wrapper/`
 - Public API exports: `src/wss_py_wrapper/__init__.py`
 - Interop core: `src/wss_py_wrapper/stimulation_controller.py`
-- CLI: `src/wss_py_wrapper/cli.py`
+- Bundled runtime assets: `Cs_Libraries/` and `Config/`
 - Packaging: `pyproject.toml` (setuptools)
 
 ## Setup
@@ -38,18 +38,6 @@ Sanity import:
 
 ```bash
 python -c "import wss_py_wrapper; print('ok')"
-```
-
-Run CLI help:
-
-```bash
-python -m wss_py_wrapper.cli -- --help
-```
-
-Run CLI in simulated transport mode (still requires DLLs):
-
-```bash
-python -m wss_py_wrapper.cli -- --test
 ```
 
 Lint/format/type-check (optional; not configured in-repo):
@@ -144,5 +132,5 @@ DLL loading notes:
 Note: this repo currently contains some runtime artifacts under `src/wss_py_wrapper/` (e.g. `__pycache__/`, `wss_*.log`). Do not add more; remove/ignore them if you are cleaning up.
 
 ## Change Discipline
-- Keep `cli.py` a thin layer over `StimulationController`.
+- Keep this repo library-focused; CLI/app code belongs in the consuming application repo.
 - Add new stable public APIs only if needed; when you do, export them via `src/wss_py_wrapper/__init__.py` and update `__all__`.
