@@ -98,8 +98,12 @@ class StimulationController:
             self._install_log_sink()
 
             core = self._create_core()
-            params_layer = self._net_types["StimParamsLayer"](core, str(self._config.config_path))
-            model_layer = self._net_types["ModelParamsLayer"](params_layer, str(self._config.config_path))
+            params_layer = self._net_types["StimParamsLayer"](
+                core, str(self._config.config_path)
+            )
+            model_layer = self._net_types["ModelParamsLayer"](
+                params_layer, str(self._config.config_path)
+            )
 
             self._wss = model_layer
             self._basic_supported, self._basic_wss = self._try_get_basic(self._wss)
@@ -184,7 +188,9 @@ class StimulationController:
         self._tick_thread.join(timeout=2)
         self._tick_thread = None
 
-    def StimulateAnalog(self, finger: str, PW: int, amp: int = 3, IPI: int = 10) -> None:
+    def StimulateAnalog(
+        self, finger: str, PW: int, amp: int = 3, IPI: int = 10
+    ) -> None:
         """Send a direct analog stimulation request.
 
         :param finger: Finger name (e.g. ``"index"``) or channel alias (e.g. ``"ch2"``).
@@ -242,32 +248,48 @@ class StimulationController:
 
         if len(args) == 2 and isinstance(args[0], self._net_types["WaveformBuilder"]):
             waveform, event_id = args
-            basic.UpdateWaveform(waveform, event_id, self._net_types["WssTarget"].Broadcast)
+            basic.UpdateWaveform(
+                waveform, event_id, self._net_types["WssTarget"].Broadcast
+            )
             return
 
-        if len(args) == 3 and isinstance(args[0], int) and isinstance(args[1], self._net_types["WaveformBuilder"]):
+        if (
+            len(args) == 3
+            and isinstance(args[0], int)
+            and isinstance(args[1], self._net_types["WaveformBuilder"])
+        ):
             target, waveform, event_id = args
             basic.UpdateWaveform(waveform, event_id, self._int_to_wss_target(target))
             return
 
         if len(args) == 2 and isinstance(args[0], (list, tuple)):
             waveform, event_id = args
-            basic.UpdateWaveform(waveform, event_id, self._net_types["WssTarget"].Broadcast)
+            basic.UpdateWaveform(
+                waveform, event_id, self._net_types["WssTarget"].Broadcast
+            )
             return
 
-        if len(args) == 3 and isinstance(args[0], int) and isinstance(args[1], (list, tuple)):
+        if (
+            len(args) == 3
+            and isinstance(args[0], int)
+            and isinstance(args[1], (list, tuple))
+        ):
             target, waveform, event_id = args
             basic.UpdateWaveform(waveform, event_id, self._int_to_wss_target(target))
             return
 
         if len(args) == 3 and all(isinstance(a, int) for a in args):
             cathodic, anodic, event_id = args
-            basic.UpdateEventShape(cathodic, anodic, event_id, self._net_types["WssTarget"].Broadcast)
+            basic.UpdateEventShape(
+                cathodic, anodic, event_id, self._net_types["WssTarget"].Broadcast
+            )
             return
 
         if len(args) == 4 and all(isinstance(a, int) for a in args):
             target, cathodic, anodic, event_id = args
-            basic.UpdateEventShape(cathodic, anodic, event_id, self._int_to_wss_target(target))
+            basic.UpdateEventShape(
+                cathodic, anodic, event_id, self._int_to_wss_target(target)
+            )
             return
 
         raise ValueError("Unsupported updateWaveform signature.")
@@ -390,7 +412,9 @@ class StimulationController:
         ch = self._finger_to_channel(finger)
         wss.StimWithMode(ch, magnitude)
 
-    def UpdateChannelParams(self, finger: str, max_val: int, min_val: int, amp: int) -> None:
+    def UpdateChannelParams(
+        self, finger: str, max_val: int, min_val: int, amp: int
+    ) -> None:
         """Update per-channel stimulation parameters.
 
         This writes values under keys like ``stim.ch.<ch>.maxPW``.
@@ -443,17 +467,21 @@ class StimulationController:
                 CoreConfigController,
                 ModelConfigController,
                 ModelParamsLayer,
+                TestModeTransport,
                 StimParamsLayer,
                 WaveformBuilder,
                 WssStimulationCore,
                 WssTarget,
             )
+            from Wss.CoreModule import SerialPortTransport  # type: ignore
         except Exception:
             from Wss.CoreModule import (  # type: ignore
                 CoreConfigController,
+                TestModeTransport,
                 WaveformBuilder,
                 WssStimulationCore,
                 WssTarget,
+                SerialPortTransport,
             )
             from Wss.ModelModule import ModelConfigController, ModelParamsLayer  # type: ignore
             from Wss.CalibrationModule import StimParamsLayer  # type: ignore
@@ -462,18 +490,28 @@ class StimulationController:
             "CoreConfigController": CoreConfigController,
             "ModelConfigController": ModelConfigController,
             "ModelParamsLayer": ModelParamsLayer,
+            "SerialPortTransport": SerialPortTransport,
             "StimParamsLayer": StimParamsLayer,
+            "TestModeTransport": TestModeTransport,
             "WaveformBuilder": WaveformBuilder,
             "WssStimulationCore": WssStimulationCore,
             "WssTarget": WssTarget,
         }
 
     def _create_core(self):
+        transport = self._create_transport()
         core_class = self._net_types["WssStimulationCore"]
         config_path = str(self._config.config_path)
+        return core_class(transport, config_path, self._config.max_setup_tries)
+
+    def _create_transport(self):
+        if self._config.test_mode:
+            return self._net_types["TestModeTransport"]()
+
+        transport_class = self._net_types["SerialPortTransport"]
         if self._config.serial_port:
-            return core_class(self._config.serial_port, config_path, self._config.test_mode, self._config.max_setup_tries)
-        return core_class(config_path, self._config.test_mode, self._config.max_setup_tries)
+            return transport_class(self._config.serial_port)
+        return transport_class()
 
     def _install_log_sink(self) -> None:
         if self._log_reset is not None:
@@ -492,7 +530,9 @@ class StimulationController:
 
     def _ensure_wss(self):
         if self._wss is None:
-            raise RuntimeError("Call Initialize() before using the stimulation controller.")
+            raise RuntimeError(
+                "Call Initialize() before using the stimulation controller."
+            )
         return self._wss
 
     def _try_get_basic(self, wss):
