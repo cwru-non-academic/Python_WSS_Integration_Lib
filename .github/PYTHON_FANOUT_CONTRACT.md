@@ -15,6 +15,9 @@ evidence has passed the validators below.
 The ROS normal workflow file is `ros-ci.yml`. All repositories belong to
 `cwru-non-academic`. Routine promotion targets `dev`;
 dispatch workflows must also be registered on default `main` before deployment.
+ROS supplies `.github/python-ci.json` matching the established pinned fixture and
+runtime contract. The existing library `_python-validation.yml` remains the
+wrapper/CLI host; ROS owns its real ROS-compatible runner and canonical harness.
 
 `wss-preflight.yml` retains `candidate_json`, `wrapper_sha`, `cli_sha`,
 `correlation_id` for wrapper/CLI. ROS accepts `candidate_json`, `wrapper_sha`,
