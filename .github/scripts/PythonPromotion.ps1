@@ -35,6 +35,7 @@ function Get-PythonHead([string]$Repository) {
     $branch.commit.sha
 }
 function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSha,[string]$ApplicationSha,[switch]$NoWait) {
+    Assert-PythonCandidate $Candidate
     Assert-PythonSha $WrapperSha
     Assert-PythonSha $ApplicationSha
     if ($Repository -cnotin @($PythonWrapperRepository,$PythonCliRepository,$PythonRosRepository)) { throw 'Unknown Python preflight repository.' }

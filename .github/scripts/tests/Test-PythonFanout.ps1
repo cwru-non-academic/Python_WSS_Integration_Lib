@@ -59,6 +59,62 @@ Assert-Rejected { Get-PythonApplication 'gui' } 'Unknown role must not widen pub
 Assert-Rejected { Assert-PythonDiff @('src/unrelated.py') @((Get-PythonApplication 'ros').gitlink) } 'ROS publication must be gitlink-only.'
 Assert-PythonDiff @('HFI_WSS_Python_Interface') @((Get-PythonApplication 'ros').gitlink)
 $checks++
+Assert-Rejected { Assert-PythonMergedApplicationPreflight $v1 'ros' ('c'*40) ('e'*40) '105' 'unused' $null } 'Legacy proof must fail before any ROS evidence lookup.'
+Assert-Rejected { Get-PythonEvidence $PythonCliRepository '105' ('e'*40) 'ros' $candidate 'unused' $null } 'CLI repository evidence cannot be relabeled as ROS.'
+# Resolve the actual repository record explicitly; no generated payload/evidence.
+$repositoryRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+$payloadRecord=Get-Content (Join-Path $repositoryRoot '.github/python-candidate.json') -Raw | ConvertFrom-Json
+Assert-PythonProjection (Join-Path $repositoryRoot 'Cs_Libraries') $payloadRecord
+$checks++
+$badPayload=$payloadRecord | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$badPayload.files[0].sha256='0'*64
+Assert-Rejected { Assert-PythonProjection (Join-Path $repositoryRoot 'Cs_Libraries') $badPayload } 'Wrong original payload hash must fail.'
+$badPayload=$payloadRecord | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$badPayload.projection_sha256='0'*64
+Assert-Rejected { Assert-PythonProjection (Join-Path $repositoryRoot 'Cs_Libraries') $badPayload } 'Wrong original payload digest must fail.'
+$badCandidate=$candidate.Clone();$badCandidate.artifact_id='999'
+Assert-Rejected { Assert-PythonSameCandidate $badCandidate $candidate } 'Exact producer artifact ID must remain bound.'
+
+# Exercise the actual preflight request builder with queued-only API stubs.
+# No remote command runs and no successful ROS runtime evidence is fabricated.
+$script:posted=$null;$script:requestRole='cli';$script:ambiguous=$false;$script:wrongSource=$false
+function Invoke-PythonGh([string[]]$Arguments) {
+    if ($Arguments[-1] -notlike '*wss-preflight.yml/runs?*') { throw 'Unexpected unit API request.' }
+    if (!$script:posted -and !$script:ambiguous) { return '[{"workflow_runs":[]}]' }
+    $source=if ($script:requestRole -ceq 'wrapper') { 'c'*40 } elseif ($script:requestRole -ceq 'ros') { 'e'*40 } else { 'd'*40 }
+    if ($script:wrongSource) { $source='f'*40 }
+    $run=@{id='900';head_sha=$source;status='queued';display_title="WSS preflight 123 / wss-123-456-$('c'*40)-$(if ($script:requestRole -ceq 'ros') {'e'*40} else {'d'*40})"}
+    $runs=@($run);if ($script:ambiguous) { $runs+=@($run) }
+    ConvertTo-Json -InputObject @(@{workflow_runs=$runs}) -Depth 8 -Compress
+}
+function gh { $script:posted=($input -join "`n") | ConvertFrom-Json; $global:LASTEXITCODE=0 }
+$savedPreflightToken=$env:PYTHON_PREFLIGHT_TOKEN
+$env:PYTHON_PREFLIGHT_TOKEN='unit-only-no-credentials'
+foreach ($role in @('wrapper','cli','ros')) {
+    $script:requestRole=$role;$script:posted=$null
+    $repo=if ($role -ceq 'wrapper') { $PythonWrapperRepository } else { (Get-PythonApplication $role).repository }
+    $appSha=if ($role -ceq 'ros') { 'e'*40 } else { 'd'*40 }
+    $queued=Start-PythonPreflight $repo $candidate ('c'*40) $appSha -NoWait
+    Assert-Test ($queued.status -ceq 'queued') 'NoWait must not claim completed acceptance.'
+    Assert-Test ($script:posted.ref -ceq 'dev') 'Preflights must target dev.'
+    Assert-Test ($script:posted.inputs.wrapper_sha -ceq ('c'*40)) 'Preflight wrapper source changed.'
+    $field=if ($role -ceq 'ros') {'ros_sha'} else {'cli_sha'}
+    Assert-Test ($script:posted.inputs.$field -ceq $appSha) 'Preflight application source changed.'
+    $unexpected=if ($role -ceq 'ros') {'cli_sha'} else {'ros_sha'}
+    Assert-Test ($script:posted.inputs.PSObject.Properties.Name -cnotcontains $unexpected) 'Preflight inputs coupled independent applications or changed CLI contract.'
+}
+$script:posted=$null;$script:ambiguous=$true
+Assert-Rejected { Start-PythonPreflight $PythonRosRepository $candidate ('c'*40) ('e'*40) -NoWait } 'Ambiguous preflight correlation must fail without redispatch.'
+Assert-Test (!$script:posted) 'Ambiguous correlation must not dispatch.'
+$script:ambiguous=$false;$script:wrongSource=$true;$script:requestRole='ros';$script:posted=$null
+Assert-Rejected { Start-PythonPreflight $PythonRosRepository $candidate ('c'*40) ('e'*40) -NoWait } 'Source-raced correlated preflight must fail.'
+$script:wrongSource=$false;$script:posted=$null
+Assert-Rejected { Start-PythonPreflight 'cwru-non-academic/Unknown' $candidate ('c'*40) ('e'*40) -NoWait } 'Unknown dispatch repository must fail.'
+Assert-Test (!$script:posted) 'Unknown repository must not dispatch.'
+$env:PYTHON_PREFLIGHT_TOKEN=$null
+Assert-Rejected { Start-PythonPreflight $PythonRosRepository $candidate ('c'*40) ('e'*40) -NoWait } 'Missing scoped token must fail before dispatch.'
+Assert-Test (!$script:posted) 'Missing token must not dispatch.'
+$env:PYTHON_PREFLIGHT_TOKEN=$savedPreflightToken
 
 # Queue metadata below is a unit stub, never green conformance evidence. Every
 # wait fails deliberately; no approval may be emitted and both apps are attempted.
