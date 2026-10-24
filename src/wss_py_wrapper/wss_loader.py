@@ -6,6 +6,8 @@ The wrapper loads a set of DLLs using :mod:`pythonnet` and then imports .NET typ
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import sys
 from typing import Iterable
 
 
@@ -29,14 +31,25 @@ class WssLoader:
 
     @staticmethod
     def _load_runtime() -> None:
+        # An embedding .NET host already initialized clr. Loading another runtime
+        # here would create incompatible managed object identities.
+        if "clr" in sys.modules:
+            return
         try:
-            from pythonnet import load
+            from pythonnet import get_runtime_info, load
+
+            if get_runtime_info() is not None:
+                return
         except Exception:
             load = None
 
         if load is None:
             return
 
+        runtime = os.environ.get("PYTHONNET_RUNTIME")
+        if runtime:
+            load(runtime)
+            return
         try:
             load("netfx")
         except Exception:
@@ -48,8 +61,16 @@ class WssLoader:
     @staticmethod
     def _add_references(dll_paths: Iterable[Path]) -> None:
         import clr  # type: ignore
+        from System import Environment  # type: ignore
 
         for dll in dll_paths:
+            if dll.name == "System.IO.Ports.dll" and Environment.Version.Major >= 6:
+                platform = "win" if os.name == "nt" else "unix"
+                runtime_dll = (
+                    dll.parent / "runtimes" / platform / "lib" / "net8.0" / dll.name
+                )
+                if runtime_dll.is_file():
+                    dll = runtime_dll
             clr.AddReference(str(dll))
 
 
@@ -60,13 +81,16 @@ def collect_dlls(cs_lib_dir: Path) -> list[Path]:
     (``WSS_Core_Interface.dll``) is forced to the end so dependencies are added
     first.
 
-    :param cs_lib_dir: Directory to search recursively.
+    Platform runtime assemblies are selected during loading; backend/native DLLs
+    are left to their owning transport rather than passed to clr.AddReference.
+
+    :param cs_lib_dir: Directory containing the managed entry assemblies.
     :returns: List of DLL paths.
     """
     if not cs_lib_dir.exists():
         return []
 
-    dlls = [p for p in cs_lib_dir.rglob("*.dll") if p.is_file()]
+    dlls = [p for p in cs_lib_dir.glob("*.dll") if p.is_file()]
     dlls.sort(key=lambda p: p.name.lower())
 
     # Ensure the primary interface loads last so dependencies resolve first.
