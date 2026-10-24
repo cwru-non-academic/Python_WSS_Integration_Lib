@@ -1,5 +1,5 @@
-name: Dispatch CLI Integration promotion
-run-name: Dispatch CLI promotion for ${{ github.event.pull_request.merge_commit_sha }}
+name: Dispatch Python application promotion
+run-name: Dispatch Python application promotion for ${{ github.event.pull_request.merge_commit_sha }}
 on:
   pull_request_target:
     types: [closed]
@@ -12,13 +12,44 @@ concurrency:
   group: python-dispatch-${{ github.event.pull_request.merge_commit_sha || github.run_id }}
   cancel-in-progress: false
 jobs:
-  dispatch:
-    name: Dispatch CLI promotion
+  plan:
+    name: Resolve Python application fan-out
     if: >-
       github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.type == 'Bot' &&
       startsWith(github.event.pull_request.head.ref, 'automation/python-wss-')
+    runs-on: windows-2022
+    outputs:
+      applications: ${{ steps.plan.outputs.applications }}
+      read_repositories: ${{ steps.plan.outputs.read_repositories }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Read exact versioned approval from trusted merge event
+        id: plan
+        shell: pwsh
+        run: |
+          . ./.github/scripts/PythonPromotion.ps1
+          $event = Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+          $approval = Read-PythonApprovalMarker $event.pull_request.body "$env:RUNNER_TEMP/approval.json"
+          $roles = @(Get-PythonDispatchApplications $approval | ForEach-Object role)
+          $read = @('WSSCore','Python_WSS_Integration_Lib','CLI_Python_WSS_Application')
+          if ($approval.schema -ceq 'wss-python-promotion/v2') { $read += 'ROS_Python_WSS_Application' }
+          $apps = @($roles | ForEach-Object { $app=Get-PythonApplication $_; @{role=$_;label=$_.ToUpperInvariant();repository=($app.repository -split '/')[1]} })
+          "applications=$($apps | ConvertTo-Json -Depth 4 -Compress -AsArray)" >> $env:GITHUB_OUTPUT
+          'read_repositories<<PYTHON_APPLICATIONS' >> $env:GITHUB_OUTPUT
+          $read >> $env:GITHUB_OUTPUT
+          'PYTHON_APPLICATIONS' >> $env:GITHUB_OUTPUT
+  dispatch:
+    needs: plan
+    name: Dispatch ${{ matrix.application.label }} promotion
+    strategy:
+      fail-fast: false
+      matrix:
+        application: ${{ fromJSON(needs.plan.outputs.applications) }}
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -36,10 +67,7 @@ jobs:
           app-id: ${{ vars.WSS_GITHUB_APP_ID }}
           private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
           owner: cwru-non-academic
-          repositories: |
-            WSSCore
-            Python_WSS_Integration_Lib
-            CLI_Python_WSS_Application
+          repositories: ${{ needs.plan.outputs.read_repositories }}
           permission-contents: read
           permission-actions: read
           permission-pull-requests: read
@@ -48,8 +76,9 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.read.outputs.token }}
-        run: ./.github/scripts/Dispatch-PythonCli.ps1 -EventPath $env:GITHUB_EVENT_PATH -WorkRoot "$env:RUNNER_TEMP/python-dispatch" -ValidateOnly
-      - name: Mint CLI Actions token after validation
+          APPLICATION_ROLE: ${{ matrix.application.role }}
+        run: ./.github/scripts/Dispatch-PythonCli.ps1 -Role $env:APPLICATION_ROLE -EventPath $env:GITHUB_EVENT_PATH -WorkRoot "$env:RUNNER_TEMP/python-dispatch" -ValidateOnly
+      - name: Mint target-only application Actions token after validation
         if: steps.validate.outputs.dispatch_needed == 'true'
         uses: actions/create-github-app-token@v2
         id: dispatch
@@ -57,13 +86,15 @@ jobs:
           app-id: ${{ vars.WSS_GITHUB_APP_ID }}
           private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
           owner: cwru-non-academic
-          repositories: CLI_Python_WSS_Application
+          repositories: ${{ matrix.application.repository }}
           permission-actions: write
       - name: Dispatch once; inspect any uncertain outcome before retry
         if: steps.validate.outputs.dispatch_needed == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.dispatch.outputs.token }}
+          APPLICATION_REPOSITORY: ${{ matrix.application.repository }}
+          APPLICATION_ROLE: ${{ matrix.application.role }}
         run: |
-          gh api --method POST repos/cwru-non-academic/CLI_Python_WSS_Application/actions/workflows/promote-integration.yml/dispatches --input "$env:RUNNER_TEMP/python-dispatch/cli-dispatch.json"
+          gh api --method POST "repos/cwru-non-academic/$env:APPLICATION_REPOSITORY/actions/workflows/promote-integration.yml/dispatches" --input "$env:RUNNER_TEMP/python-dispatch/$env:APPLICATION_ROLE-dispatch.json"
           if ($LASTEXITCODE -ne 0) { throw 'Dispatch failed or uncertain; inspect before replay.' }

@@ -34,10 +34,11 @@ function Get-PythonHead([string]$Repository) {
     Assert-PythonSha $branch.commit.sha
     $branch.commit.sha
 }
-function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSha,[string]$CliSha) {
+function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSha,[string]$ApplicationSha,[switch]$NoWait) {
     Assert-PythonSha $WrapperSha
-    Assert-PythonSha $CliSha
-    $correlation="wss-$($Candidate.run_id)-$($Candidate.artifact_id)-$WrapperSha-$CliSha"
+    Assert-PythonSha $ApplicationSha
+    if ($Repository -cnotin @($PythonWrapperRepository,$PythonCliRepository,$PythonRosRepository)) { throw 'Unknown Python preflight repository.' }
+    $correlation="wss-$($Candidate.run_id)-$($Candidate.artifact_id)-$WrapperSha-$ApplicationSha"
     $title="WSS preflight $($Candidate.run_id) / $correlation"
     function Find-Run {
         $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
@@ -47,7 +48,10 @@ function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSh
     }
     $found=Find-Run
     if (!$found) {
-        $body=@{ ref='dev'; inputs=@{ candidate_json=($Candidate | ConvertTo-Json -Depth 5 -Compress); wrapper_sha=$WrapperSha; cli_sha=$CliSha; correlation_id=$correlation } } | ConvertTo-Json -Depth 5 -Compress
+        $inputs=@{candidate_json=($Candidate | ConvertTo-Json -Depth 5 -Compress);wrapper_sha=$WrapperSha;correlation_id=$correlation}
+        $sourceField=if ($Repository -ceq $PythonRosRepository) { 'ros_sha' } else { 'cli_sha' }
+        $inputs[$sourceField]=$ApplicationSha
+        $body=@{ref='dev';inputs=$inputs} | ConvertTo-Json -Depth 5 -Compress
         if (!$env:PYTHON_PREFLIGHT_TOKEN) { throw 'Scoped downstream Actions-write token required.' }
         $readToken=$env:GH_TOKEN
         try {
@@ -63,34 +67,56 @@ function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSh
             Start-Sleep -Seconds 5
         } while ($true)
     }
-    $expectedSha=if ($Repository -ceq $PythonWrapperRepository) { $WrapperSha } else { $CliSha }
+    $expectedSha=if ($Repository -ceq $PythonWrapperRepository) { $WrapperSha } else { $ApplicationSha }
     if ($found.head_sha -cne $expectedSha) { throw 'Correlated preflight source changed; no automatic redispatch.' }
+    if ($NoWait) { return $found }
     Wait-PythonRun $Repository ([string]$found.id) $expectedSha 'wss-preflight.yml' 'workflow_dispatch'
+}
+function Get-PythonApprovalRoles($Approval) {
+    if ($Approval.schema -ceq 'wss-python-promotion/v2') { @('wrapper','cli','ros') }
+    elseif ($Approval.schema -ceq 'wss-python-promotion/v1') { @('wrapper','cli') }
+    else { throw 'Unsupported Python approval schema.' }
+}
+function Assert-PythonFanoutApproval($Approval) {
+    if ($Approval.schema -cne 'wss-python-promotion/v2') { throw 'New wrapper and ROS promotion require v2 CLI and ROS approval; legacy v1 is CLI-only.' }
+    foreach ($role in @('wrapper','cli','ros')) {
+        Assert-PythonSha $Approval.$role.source_sha
+        if ([string]$Approval.$role.preflight_run_id -cnotmatch '^[1-9][0-9]*$') { throw 'All three source-bound preflight IDs are required.' }
+    }
+}
+function Get-PythonDispatchApplications($Approval) {
+    foreach ($role in @(Get-PythonApprovalRoles $Approval)) {
+        if ($role -cne 'wrapper') { Get-PythonApplication $role }
+    }
 }
 function Read-PythonApproval([string]$Path) {
     $value=Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-    if ($value.schema -cne 'wss-python-promotion/v1') { throw 'Python-specific approval schema required.' }
+    $roles=@(Get-PythonApprovalRoles $value)
     Assert-PythonCandidate $value.candidate
-    foreach ($role in @('wrapper','cli')) {
+    foreach ($role in $roles) {
         Assert-PythonSha $value.$role.source_sha
         if ([string]$value.$role.preflight_run_id -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid preflight run ID.' }
     }
     Assert-PythonSha $value.fixture.commit
     if ($value.fixture.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $value.projection_sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Invalid evidence digest.' }
-    [pscustomobject][ordered]@{
-        schema='wss-python-promotion/v1'
+    $normalized=[ordered]@{
+        schema=$value.schema
         candidate=[ordered]@{ repository=$value.candidate.repository; commit=$value.candidate.commit; run_id=[string]$value.candidate.run_id; artifact_id=[string]$value.candidate.artifact_id; archive=$value.candidate.archive; sha256=$value.candidate.sha256 }
         wrapper=[ordered]@{source_sha=$value.wrapper.source_sha;preflight_run_id=[string]$value.wrapper.preflight_run_id}
         cli=[ordered]@{source_sha=$value.cli.source_sha;preflight_run_id=[string]$value.cli.preflight_run_id}
-        fixture=[ordered]@{commit=$value.fixture.commit;sha256=$value.fixture.sha256}
-        projection_sha256=$value.projection_sha256
     }
+    if ($roles -ccontains 'ros') { $normalized.ros=[ordered]@{source_sha=$value.ros.source_sha;preflight_run_id=[string]$value.ros.preflight_run_id} }
+    $normalized.fixture=[ordered]@{commit=$value.fixture.commit;sha256=$value.fixture.sha256}
+    $normalized.projection_sha256=$value.projection_sha256
+    [pscustomobject]$normalized
 }
 function Get-PythonApprovalMarker($Approval) {
-    '<!-- wss-python-approval:'+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Approval | ConvertTo-Json -Depth 8 -Compress)))+' -->'
+    $null=Get-PythonApprovalRoles $Approval
+    $prefix=if ($Approval.schema -ceq 'wss-python-promotion/v2') { '<!-- wss-python-approval:v2 ' } else { '<!-- wss-python-approval:' }
+    $prefix+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Approval | ConvertTo-Json -Depth 8 -Compress)))+' -->'
 }
 function Read-PythonApprovalMarker([string]$Body,[string]$Destination) {
-    $matches=[regex]::Matches($Body,'(?m)^<!-- wss-python-approval:([A-Za-z0-9+/=]+) -->\r?$')
+    $matches=[regex]::Matches($Body,'(?m)^<!-- wss-python-approval:(?:v2 )?([A-Za-z0-9+/=]+) -->\r?$')
     if ($matches.Count -ne 1 -or [regex]::Matches($Body,'<!-- wss-python-approval:').Count -ne 1) { throw 'Missing/ambiguous Python approval marker.' }
     [IO.File]::WriteAllText($Destination,[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($matches[0].Groups[1].Value)))
     $approval=Read-PythonApproval $Destination
@@ -98,9 +124,11 @@ function Read-PythonApprovalMarker([string]$Body,[string]$Destination) {
     $approval
 }
 function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Role,$Candidate,[string]$Root,$Config) {
+    if ($Role -ceq 'wrapper') { $expectedRepository=$PythonWrapperRepository; $requiredName='Preflight behavioral tests'; $sourceField='wrapper_sha' }
+    else { $application=Get-PythonApplication $Role; $expectedRepository=$application.repository; $requiredName=$application.acceptance; $sourceField=$application.source_field }
+    if ($Repository -cne $expectedRepository) { throw 'Role/repository evidence mismatch.' }
     $null=Wait-PythonRun $Repository $RunId $SourceSha 'wss-preflight.yml' 'workflow_dispatch'
     $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
-    $requiredName=if ($Role -ceq 'wrapper') { 'Preflight behavioral tests' } else { 'CLI general conformance' }
     $required=@($pages | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq $requiredName })
     if ($required.Count -ne 1 -or $required[0].conclusion -cne 'success') { throw 'Required candidate acceptance job missing/skipped/failed.' }
     if (Test-Path -LiteralPath $Root) { throw 'Evidence download destination must be new.' }
@@ -109,7 +137,7 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     if (@(Compare-Object @('evidence.json','results.xml','dotnet.log','projection.json') $files -CaseSensitive).Count -ne 0) { throw 'Unexpected/incomplete preflight artifact.' }
     $e=Get-Content -LiteralPath (Join-Path $Root 'evidence.json') -Raw | ConvertFrom-Json
     Assert-PythonSameCandidate $e.candidate $Candidate
-    $expectedRunSha=if ($Role -ceq 'wrapper') { $e.wrapper_sha } else { $e.cli_sha }
+    $expectedRunSha=$e.$sourceField
     if ($e.schema -cne 'wss-python-evidence/v1' -or $e.execution -cne 'pythonnet' -or $e.python_executed -cne $true -or $e.role -cne $Role -or $e.mode -cne 'candidate' -or $e.run_repository -cne $Repository -or
         [string]$e.run_id -cne $RunId -or $e.run_sha -cne $SourceSha -or $expectedRunSha -cne $SourceSha -or
         $e.fixture_sha -cne $Config.fixture_commit -or $e.fixture_sha256 -cne $Config.fixture_sha256 -or
@@ -121,34 +149,69 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     Assert-PythonResults (Join-Path $Root 'results.xml') $Config -DotNet
     $projection=Get-Content -LiteralPath (Join-Path $Root 'projection.json') -Raw | ConvertFrom-Json
     Assert-PythonSameCandidate $projection.candidate $Candidate
-    if ($projection.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $projection.files) -cne $e.projection_sha256 -or
+    if ($projection.files.Count -ne $PythonProjectionFiles.Count -or @(Compare-Object $PythonProjectionFiles @($projection.files.source) -CaseSensitive).Count -ne 0 -or
+        $projection.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $projection.files) -cne $e.projection_sha256 -or
         $projection.projection_sha256 -cne $e.projection_sha256) { throw 'Projection/evidence mismatch.' }
     $e
 }
 function Assert-PythonApproval($Approval,[string]$EvidenceRoot,$Config) {
     Assert-PythonProducer $Approval.candidate
-    foreach ($role in @('wrapper','cli')) {
-        $repo=if ($role -ceq 'wrapper') { $PythonWrapperRepository } else { $PythonCliRepository }
+    foreach ($role in @(Get-PythonApprovalRoles $Approval)) {
+        $repo=if ($role -ceq 'wrapper') { $PythonWrapperRepository } else { (Get-PythonApplication $role).repository }
         $e=Get-PythonEvidence $repo $Approval.$role.preflight_run_id $Approval.$role.source_sha $role $Approval.candidate (Join-Path $EvidenceRoot $role) $Config
-        if ($e.wrapper_sha -cne $Approval.wrapper.source_sha -or $e.cli_sha -cne $Approval.cli.source_sha -or
+        $pairRole=if ($role -ceq 'ros') { 'ros' } else { 'cli' }
+        $sourceField=(Get-PythonApplication $pairRole).source_field
+        if ($e.wrapper_sha -cne $Approval.wrapper.source_sha -or $e.$sourceField -cne $Approval.$pairRole.source_sha -or
             $e.projection_sha256 -cne $Approval.projection_sha256 -or $e.fixture_sha -cne $Approval.fixture.commit -or
-            $e.fixture_sha256 -cne $Approval.fixture.sha256) { throw 'Preflights did not test the same source/candidate tuple.' }
+            $e.fixture_sha256 -cne $Approval.fixture.sha256) { throw 'Preflights did not test the approved source/candidate tuple.' }
     }
 }
-function Assert-PythonMergedCliPreflight($Approval,[string]$WrapperSha,[string]$CliSha,[string]$RunId,[string]$Root,$Config) {
+function Assert-PythonMergedApplicationPreflight($Approval,[ValidateSet('cli','ros')][string]$Role,[string]$WrapperSha,[string]$ApplicationSha,[string]$RunId,[string]$Root,$Config) {
+    if ($Role -ceq 'ros') { Assert-PythonFanoutApproval $Approval }
     Assert-PythonSha $WrapperSha
-    Assert-PythonSha $CliSha
-    if ($RunId -cnotmatch '^[1-9][0-9]*$') { throw 'Exact merged-wrapper CLI preflight ID required.' }
-    $e=Get-PythonEvidence $PythonCliRepository $RunId $CliSha 'cli' $Approval.candidate $Root $Config
-    if ($e.wrapper_sha -cne $WrapperSha -or $e.cli_sha -cne $CliSha -or $e.projection_sha256 -cne $Approval.projection_sha256 -or
-        $e.fixture_sha -cne $Approval.fixture.commit -or $e.fixture_sha256 -cne $Approval.fixture.sha256) { throw 'CLI preflight did not test the exact accepted merged wrapper and current CLI source.' }
+    Assert-PythonSha $ApplicationSha
+    if ($RunId -cnotmatch '^[1-9][0-9]*$') { throw 'Exact merged-wrapper application preflight ID required.' }
+    $application=Get-PythonApplication $Role
+    $e=Get-PythonEvidence $application.repository $RunId $ApplicationSha $Role $Approval.candidate $Root $Config
+    if ($e.wrapper_sha -cne $WrapperSha -or $e.($application.source_field) -cne $ApplicationSha -or $e.projection_sha256 -cne $Approval.projection_sha256 -or
+        $e.fixture_sha -cne $Approval.fixture.commit -or $e.fixture_sha256 -cne $Approval.fixture.sha256) { throw 'Application preflight did not test the exact accepted merged wrapper and current application source.' }
+}
+function Assert-PythonMergedCliPreflight($Approval,[string]$WrapperSha,[string]$CliSha,[string]$RunId,[string]$Root,$Config) {
+    Assert-PythonMergedApplicationPreflight $Approval 'cli' $WrapperSha $CliSha $RunId $Root $Config
+}
+function Get-PythonApplicationPreflightMarker([ValidateSet('cli','ros')][string]$Role,[string]$WrapperSha,[string]$ApplicationSha,[string]$RunId) {
+    Assert-PythonSha $WrapperSha
+    Assert-PythonSha $ApplicationSha
+    if ($RunId -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid application preflight ID.' }
+    $record=[ordered]@{wrapper_sha=$WrapperSha}
+    $record[(Get-PythonApplication $Role).source_field]=$ApplicationSha
+    $record.preflight_run_id=$RunId
+    '<!-- wss-python-'+$Role+'-preflight:v1 '+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Compress)))+' -->'
 }
 function Get-PythonCliPreflightMarker([string]$WrapperSha,[string]$CliSha,[string]$RunId) {
-    Assert-PythonSha $WrapperSha
-    Assert-PythonSha $CliSha
-    if ($RunId -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid CLI preflight ID.' }
-    $record=[ordered]@{wrapper_sha=$WrapperSha;cli_sha=$CliSha;preflight_run_id=$RunId} | ConvertTo-Json -Compress
-    '<!-- wss-python-cli-preflight:v1 '+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($record))+' -->'
+    Get-PythonApplicationPreflightMarker 'cli' $WrapperSha $CliSha $RunId
+}
+function New-PythonFanoutApproval($Candidate,[string]$WrapperSha,[string]$CliSha,[string]$RosSha,$Config) {
+    $sources=[ordered]@{wrapper=@{repository=$PythonWrapperRepository;sha=$WrapperSha;application_sha=$CliSha};cli=@{repository=$PythonCliRepository;sha=$CliSha;application_sha=$CliSha};ros=@{repository=$PythonRosRepository;sha=$RosSha;application_sha=$RosSha}}
+    $runs=@{}; $failures=[Collections.Generic.List[string]]::new()
+    # Dispatch/discover every independent role before waiting on any role.
+    foreach ($role in $sources.Keys) {
+        try { $runs[$role]=Start-PythonPreflight $sources[$role].repository $Candidate $WrapperSha $sources[$role].application_sha -NoWait }
+        catch { $failures.Add("$role dispatch: $($_.Exception.Message)") }
+    }
+    foreach ($role in $sources.Keys) {
+        if (!$runs.ContainsKey($role)) { continue }
+        try { $null=Wait-PythonRun $sources[$role].repository ([string]$runs[$role].id) $sources[$role].sha 'wss-preflight.yml' 'workflow_dispatch' }
+        catch { $failures.Add("$role preflight: $($_.Exception.Message)") }
+    }
+    if ($failures.Count) { throw ('No fan-out approval: '+($failures -join '; ')) }
+    [ordered]@{
+        schema='wss-python-promotion/v2';candidate=$Candidate
+        wrapper=@{source_sha=$WrapperSha;preflight_run_id=[string]$runs.wrapper.id}
+        cli=@{source_sha=$CliSha;preflight_run_id=[string]$runs.cli.id}
+        ros=@{source_sha=$RosSha;preflight_run_id=[string]$runs.ros.id}
+        fixture=@{commit=$Config.fixture_commit;sha256=$Config.fixture_sha256}
+    }
 }
 function Assert-PythonRemoteProjection([string]$Sha,$Record) {
     Assert-PythonSha $Sha
