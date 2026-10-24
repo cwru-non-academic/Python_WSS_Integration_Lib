@@ -124,18 +124,54 @@ function Read-PythonApprovalMarker([string]$Body,[string]$Destination) {
     if ((Get-PythonApprovalMarker $approval) -cne $matches[0].Value.TrimEnd("`r")) { throw 'Noncanonical approval marker.' }
     $approval
 }
+function Get-PythonEvidenceFiles([ValidateSet('wrapper','cli','ros')][string]$Role) {
+    @('evidence.json','results.xml','dotnet.log','projection.json')
+    if ($Role -ceq 'ros') { @('ros-model.json','ros-native-symlink.json','ros-native-copy.json') }
+}
+function Get-PythonEvidenceJobs([ValidateSet('wrapper','cli','ros')][string]$Role) {
+    if ($Role -ceq 'wrapper') { 'Preflight behavioral tests' }
+    elseif ($Role -ceq 'cli') { 'CLI general conformance' }
+    else {
+        'ROS compatibility'
+        'ROS model and contract fixtures (Windows development host)'
+        'ROS colcon and installed DDS fixture (Humble development baseline)'
+    }
+}
+function Assert-PythonRosReports($Evidence,[string]$Root) {
+    if ($Evidence.native_ros_distribution -cne 'humble') { throw 'Expected the separately identified Humble development baseline.' }
+    foreach ($pair in @(@('ros-model.json','ros_model_sha256'),@('ros-native-symlink.json','ros_native_symlink_sha256'),@('ros-native-copy.json','ros_native_copy_sha256'))) {
+        if ($Evidence.($pair[1]) -cnotmatch '^[0-9a-f]{64}$' -or
+            (Get-FileHash -LiteralPath (Join-Path $Root $pair[0])).Hash.ToLowerInvariant() -cne $Evidence.($pair[1])) { throw "ROS report content hash mismatch: $($pair[0])" }
+    }
+    $model=Get-Content -LiteralPath (Join-Path $Root 'ros-model.json') -Raw | ConvertFrom-Json
+    if ($model.schema -cne 'wss-ros-emulator/v1' -or $model.tests -lt 5 -or $model.failed -ne 0 -or $model.skipped -ne 0 -or $model.observations.Count -lt 15) { throw 'ROS model fixture execution is incomplete or unsuccessful.' }
+    # Preserve the independently asserted ROS fixture coverage. Expected drive
+    # values remain owned by its real tests, not reimplemented in promotion code.
+    foreach ($scenario in @(@('P','PW','H03'),@('PD','PW','H03'),@('P','PA','H03'),@('PD','PA','H03'),@('P','PW','J03'))) {
+        foreach ($devices in 1..3) {
+            $matches=@($model.observations | Where-Object { $_.mode -ceq $scenario[0] -and $_.amplitude_mode -ceq $scenario[1] -and $_.firmware -ceq $scenario[2] -and $_.devices -eq $devices })
+            if ($matches.Count -ne 1 -or $matches[0].initialization_conformant -cne $true -or $matches[0].protocol_errors -ne 0 -or $matches[0].model_path_drive.Count -ne ($devices*3)) { throw 'ROS model scenario coverage/conformance mismatch.' }
+        }
+    }
+    foreach ($name in @('ros-native-symlink.json','ros-native-copy.json')) {
+        $native=Get-Content -LiteralPath (Join-Path $Root $name) -Raw | ConvertFrom-Json
+        if ($native.schema -cne 'wss-ros-native/v1' -or $native.passed -cne $true -or $native.channels.Count -ne 9 -or @(Compare-Object @(1..9) @($native.channels)).Count -ne 0) { throw "Missing/failed real DDS layout fixture: $name" }
+    }
+}
 function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Role,$Candidate,[string]$Root,$Config) {
     if ($Role -ceq 'wrapper') { $expectedRepository=$PythonWrapperRepository; $requiredName='Preflight behavioral tests'; $sourceField='wrapper_sha' }
     else { $application=Get-PythonApplication $Role; $expectedRepository=$application.repository; $requiredName=$application.acceptance; $sourceField=$application.source_field }
     if ($Repository -cne $expectedRepository) { throw 'Role/repository evidence mismatch.' }
     $null=Wait-PythonRun $Repository $RunId $SourceSha 'wss-preflight.yml' 'workflow_dispatch'
     $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
-    $required=@($pages | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq $requiredName })
-    if ($required.Count -ne 1 -or $required[0].conclusion -cne 'success') { throw 'Required candidate acceptance job missing/skipped/failed.' }
+    foreach ($requiredName in @(Get-PythonEvidenceJobs $Role)) {
+        $required=@($pages | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq $requiredName })
+        if ($required.Count -ne 1 -or $required[0].conclusion -cne 'success') { throw "Required candidate job missing/skipped/failed: $requiredName" }
+    }
     if (Test-Path -LiteralPath $Root) { throw 'Evidence download destination must be new.' }
     $null=Invoke-PythonGh @('run','download',$RunId,'--repo',$Repository,'--name','python-preflight-evidence','--dir',$Root)
     $files=@(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object { [IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/') })
-    if (@(Compare-Object @('evidence.json','results.xml','dotnet.log','projection.json') $files -CaseSensitive).Count -ne 0) { throw 'Unexpected/incomplete preflight artifact.' }
+    if (@(Compare-Object @(Get-PythonEvidenceFiles $Role) $files -CaseSensitive).Count -ne 0) { throw 'Unexpected/incomplete preflight artifact.' }
     $e=Get-Content -LiteralPath (Join-Path $Root 'evidence.json') -Raw | ConvertFrom-Json
     Assert-PythonSameCandidate $e.candidate $Candidate
     $expectedRunSha=$e.$sourceField
@@ -148,6 +184,7 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
         if ((Get-FileHash -LiteralPath (Join-Path $Root $pair[0])).Hash.ToLowerInvariant() -cne $e.($pair[1])) { throw 'Evidence content hash mismatch.' }
     }
     Assert-PythonResults (Join-Path $Root 'results.xml') $Config -DotNet
+    if ($Role -ceq 'ros') { Assert-PythonRosReports $e $Root }
     $projection=Get-Content -LiteralPath (Join-Path $Root 'projection.json') -Raw | ConvertFrom-Json
     Assert-PythonSameCandidate $projection.candidate $Candidate
     if ($projection.files.Count -ne $PythonProjectionFiles.Count -or @(Compare-Object $PythonProjectionFiles @($projection.files.source) -CaseSensitive).Count -ne 0 -or

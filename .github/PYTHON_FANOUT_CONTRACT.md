@@ -10,7 +10,7 @@ evidence has passed the validators below.
 | --- | --- | --- | --- |
 | wrapper | Python_WSS_Integration_Lib | n/a | Integration behavioral tests |
 | cli | CLI_Python_WSS_Application | external/wss-py-wrapper | CLI general conformance |
-| ros | ROS_Python_WSS_Application | HFI_WSS_Python_Interface | ROS general conformance |
+| ros | ROS_Python_WSS_Application | HFI_WSS_Python_Interface | ROS compatibility |
 
 The ROS normal workflow file is `ros-ci.yml`. All repositories belong to
 `cwru-non-academic`. Routine promotion targets `dev`;
@@ -74,6 +74,31 @@ failures/skips, eighteen unchanged assertion expressions, fixture identity,
 candidate identity, projection digest and XML/log SHA256 values. ROS must generate
 real canonical NUnit results through its production path. No stubbed ROS result,
 CLI-only proof or generated green summary substitutes for that evidence.
+
+ROS retains its two independently executed suites and adds the unchanged
+canonical corpus to the Windows job. Candidate acceptance requires all three
+successful, non-skipped jobs by their exact names:
+
+- `ROS compatibility`
+- `ROS model and contract fixtures (Windows development host)`
+- `ROS colcon and installed DDS fixture (Humble development baseline)`
+
+The ROS artifact has exactly **seven** files: the four canonical files above,
+plus `ros-model.json`, `ros-native-symlink.json`, `ros-native-copy.json`. The
+envelope adds `ros_model_sha256`, `ros_native_symlink_sha256`,
+`ros_native_copy_sha256` and `native_ros_distribution: humble`. Its Python/SDK
+fields describe the Windows canonical host, not the distinct native ROS host.
+
+`ros-model.json` preserves `wss-ros-emulator/v1`: at least five real Core model
+tests, zero failures/skips, and all fifteen original mode/amplitude/firmware/device
+observations, conformant initialization and zero protocol errors. Expected drive
+assertions stay in the ROS tests, including explicit characterization of the
+pre-existing capacity issue; promotion code does not invent substitute values.
+The two `wss-ros-native/v1` reports must pass with all nine DDS channels in their
+respective copied/symlink installed layouts. These remain clearly distinguished:
+actual Core with ROS doubles versus actual rclpy/DDS with a managed recording
+double. The ten canonical assertions supplement both suites and are not relabeled
+as proof of DDS or StimWithMode coverage. Missing any report/hash/job fails closed.
 
 `projection.json` uses the existing `wss-python-projection/v1` complete universal
 inventory and file hashes. The released payload is never rebuilt or overlaid.
