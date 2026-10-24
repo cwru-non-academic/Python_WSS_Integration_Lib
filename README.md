@@ -90,4 +90,3 @@ python -m build
 ## Conformance and automatic dependency promotion
 
 See [.github/PYTHON_AUTOMATION.md](.github/PYTHON_AUTOMATION.md) for canonical tests, CI checks, artifact provenance, dev promotion and human merge gates.
-
