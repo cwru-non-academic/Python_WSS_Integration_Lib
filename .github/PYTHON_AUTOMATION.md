@@ -37,8 +37,9 @@ Workflow files match the C# naming: `wss-compatibility.yml`, `wss-preflight.yml`
 `cli-ci.yml`, `promote-wss.yml`, `dispatch-cli-promotion.yml`, and
 `promote-integration.yml`. Promotion names are **Promote WSS into Integration**,
 **Dispatch CLI Integration promotion**, and **Promote Integration submodule**.
-Dependency PR titles are **Promote universal WSS run {run_id}** for both Python
-roles; each PR states the dependency payload or gitlink scope in its body.
+Dependency PR titles match C#: **Promote universal WSS run {run_id}** for the
+integration and **Promote universal WSS run {run_id} / Integration {short_sha}**
+for the CLI gitlink update.
 
 `Invoke-DotNetConformance.ps1` verifies clean exact source SHAs, the canonical
 fixture hash, the complete original universal inventory and every file hash before

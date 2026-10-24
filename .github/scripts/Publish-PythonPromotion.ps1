@@ -65,7 +65,9 @@ $body="Promotes the exact candidate accepted by both Python preflights. Manual r
 if ($role -ceq 'cli') { $body+="`nActual merged-wrapper CLI preflight: https://github.com/$PythonCliRepository/actions/runs/$($prepared.cli_preflight_run_id)`n$cliMarker`n" }
 [IO.File]::WriteAllText($bodyPath,$body)
 $readToken=$env:GH_TOKEN
+$title="Promote universal WSS run $($approval.candidate.run_id)"
+if ($role -ceq 'cli') { $title+=" / Integration $($prepared.wrapper_merge_sha.Substring(0,12))" }
 try {
     $env:GH_TOKEN=$env:PYTHON_PUSH_TOKEN
-    $null=Invoke-PythonGh @('pr','create','--repo',$repo,'--base','dev','--head',$branch,'--title',"Promote universal WSS run $($approval.candidate.run_id)",'--body-file',$bodyPath)
+    $null=Invoke-PythonGh @('pr','create','--repo',$repo,'--base','dev','--head',$branch,'--title',$title,'--body-file',$bodyPath)
 } finally { $env:GH_TOKEN=$readToken }
