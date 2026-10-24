@@ -1,0 +1,24 @@
+{
+  "schema": "wss-python-ci/v1",
+  "branch": "dev",
+  "baseline_ready": true,
+  "fixture_repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+  "fixture_commit": "7145e2307f997f703748530bf74311ef94455e98",
+  "fixture_sha256": "1cdfb9448a1776011eadc9aef8356362216032013a4f268f50242746c50a0b44",
+  "automated_execution": "pythonnet",
+  "dotnet_sdk": "9.0.316",
+  "dotnet_expected_cases": [
+    "AnalogStimulationThroughCSharpImplementationPassesCoreConformance",
+    "InitializationThroughCSharpImplementationPassesCoreConformance",
+    "normalized.minus-0.2",
+    "normalized.0.0",
+    "normalized.0.37",
+    "normalized.0.5",
+    "normalized.1.0",
+    "normalized.1.2",
+    "RuntimeEventEditThroughCSharpImplementationResumesConformantStreaming",
+    "StopStimulationThroughCSharpImplementationDoesNotResumeStreaming"
+  ],
+  "python_version": "3.12",
+  "pythonnet_version": "3.0.5"
+}

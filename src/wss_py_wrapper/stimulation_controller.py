@@ -75,6 +75,7 @@ class StimulationController:
         self._log_type = None
         self._net_types = None
         self.started = False
+        self._transport = None
 
     @property
     def BasicSupported(self) -> bool:
@@ -138,6 +139,7 @@ class StimulationController:
             self._wss = None
             self._basic_wss = None
             self._basic_supported = False
+            self._transport = None
             self.started = False
 
     def releaseRadio(self) -> None:
@@ -212,14 +214,28 @@ class StimulationController:
         wss.StartStim(self._net_types["WssTarget"].Broadcast)
         self.started = True
 
-    def StopStimulation(self) -> None:
+    def StopStimulation(self, targetWSS: int | None = None) -> None:
         """Broadcast a stop stimulation command.
 
         :raises RuntimeError: If called before :meth:`Initialize`.
         """
         wss = self._ensure_wss()
-        wss.StopStim(self._net_types["WssTarget"].Broadcast)
+        wss.StopStim(self._int_to_wss_target(targetWSS))
         self.started = False
+
+    def UpdateEventRatio(self, targetWSS: int, ratio: int, eventID: int) -> None:
+        """Edit an event ratio through Core's pause/edit/resume boundary."""
+        self._ensure_wss()
+        basic = self._require_basic()
+        if basic is None:
+            raise RuntimeError("Basic stimulation not supported.")
+        basic.UpdateEventRatio(ratio, eventID, self._int_to_wss_target(targetWSS))
+
+    def GetConformance(self):
+        """Return Core's evaluator for the explicitly selected emulator, or None."""
+        if not self._config.conformance_mode or self._transport is None:
+            return None
+        return self._transport.Conformance
 
     def Save(self, targetWSS: int | None = None) -> None:
         basic = self._require_basic()
@@ -463,6 +479,41 @@ class StimulationController:
         loader.load()
 
         try:
+            from Wss.CoreModule import (  # type: ignore
+                CoreConfigController,
+                WssStimulationCore,
+                WssStimulationCoreOptions,
+                WaveformBuilder,
+                WssTarget,
+            )
+            from Wss.Transports import (  # type: ignore
+                SerialPortTransport,
+                SerialPortTransportOptions,
+                TestModeTransport,
+                TestModeTransportOptions,
+            )
+            from Wss.ModelModule import ModelConfigController, ModelParamsLayer  # type: ignore
+            from Wss.CalibrationModule import StimParamsLayer  # type: ignore
+
+            self._net_types = dict(
+                CoreConfigController=CoreConfigController,
+                WssStimulationCore=WssStimulationCore,
+                WssStimulationCoreOptions=WssStimulationCoreOptions,
+                WaveformBuilder=WaveformBuilder,
+                WssTarget=WssTarget,
+                SerialPortTransport=SerialPortTransport,
+                SerialPortTransportOptions=SerialPortTransportOptions,
+                TestModeTransport=TestModeTransport,
+                TestModeTransportOptions=TestModeTransportOptions,
+                ModelConfigController=ModelConfigController,
+                ModelParamsLayer=ModelParamsLayer,
+                StimParamsLayer=StimParamsLayer,
+            )
+            return
+        except ImportError:
+            pass
+
+        try:
             from WSS_Core_Interface import (  # type: ignore
                 CoreConfigController,
                 ModelConfigController,
@@ -500,15 +551,34 @@ class StimulationController:
 
     def _create_core(self):
         transport = self._create_transport()
+        self._transport = transport
         core_class = self._net_types["WssStimulationCore"]
         config_path = str(self._config.config_path)
+        if "WssStimulationCoreOptions" in self._net_types:
+            options = self._net_types["WssStimulationCoreOptions"]()
+            options.ConfigPath = config_path
+            options.MaxSetupTries = self._config.max_setup_tries
+            return core_class(transport, options)
         return core_class(transport, config_path, self._config.max_setup_tries)
 
     def _create_transport(self):
+        if self._config.conformance_mode:
+            from Wss.Testing import EmulatedWssTransport  # type: ignore
+
+            return EmulatedWssTransport()
         if self._config.test_mode:
+            if "TestModeTransportOptions" in self._net_types:
+                return self._net_types["TestModeTransport"](
+                    self._net_types["TestModeTransportOptions"]()
+                )
             return self._net_types["TestModeTransport"]()
 
         transport_class = self._net_types["SerialPortTransport"]
+        if "SerialPortTransportOptions" in self._net_types:
+            options = self._net_types["SerialPortTransportOptions"]()
+            options.PortName = self._config.serial_port or ""
+            options.AutoSelectPort = not bool(self._config.serial_port)
+            return transport_class(options)
         if self._config.serial_port:
             return transport_class(self._config.serial_port)
         return transport_class()

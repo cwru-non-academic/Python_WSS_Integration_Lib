@@ -1,0 +1,34 @@
+{
+  "schema": "wss-python-bootstrap/v1",
+  "candidate": {
+    "repository": "cwru-non-academic/WSSCore",
+    "run_id": "39092192696",
+    "artifact_id": 12123267360,
+    "commit": "5ec22900587587e9e9465ffa53d04d7d1ce13545",
+    "release_tag": "",
+    "archive": "WSS-Universal-ci.zip",
+    "sha256": "3bc303096594978fa77e95cd80901a8fb72d26c42a7408c38c8668563b6f1a7e"
+  },
+  "reference_repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+  "reference_commit": "7145e2307f997f703748530bf74311ef94455e98",
+  "reference_approval": {
+    "schema": 2,
+    "candidate": {
+      "repository": "cwru-non-academic/WSSCore",
+      "run_id": "39092192696",
+      "artifact_id": "12123267360",
+      "commit": "5ec22900587587e9e9465ffa53d04d7d1ce13545",
+      "archive": "WSS-Universal-ci.zip",
+      "sha256": "3bc303096594978fa77e95cd80901a8fb72d26c42a7408c38c8668563b6f1a7e"
+    },
+    "integration": {
+      "source_sha": "ded84fce9b06a170adeaa25f54b5a0129000114c",
+      "preflight_run_id": "39092569170"
+    },
+    "cli": {
+      "source_sha": "ab466dd8edde47a9eb5cb5940a40200a2957cc3c",
+      "preflight_run_id": "39092576119"
+    }
+  },
+  "note": "Initial Python baseline uses the independently downloaded exact Core archive. Reference approval proves CSharp preflights only; Python acceptance is established by new exact-commit CI."
+}

@@ -45,6 +45,7 @@ class WssConfig:
     :param test_mode: Whether to enable simulated transport.
     :param max_setup_tries: Maximum number of setup retries used by the .NET core.
     :param tick_interval_ms: Background tick interval in milliseconds.
+    :param conformance_mode: Explicitly use Core's in-memory conformance emulator.
     """
 
     config_path: Path
@@ -54,6 +55,11 @@ class WssConfig:
     test_mode: bool = False
     max_setup_tries: int = 5
     tick_interval_ms: int = 10
+    conformance_mode: bool = False
+
+    def __post_init__(self) -> None:
+        if self.conformance_mode and self.test_mode:
+            raise ValueError("Select either conformance_mode or test_mode.")
 
     @classmethod
     def default(cls, main_file: Path) -> "WssConfig":

@@ -38,3 +38,8 @@ Thumbs.db
 # Temp
 tmp/
 temp/
+
+# Conformance outputs
+conformance-results/
+*.egg-info/
+dist/
