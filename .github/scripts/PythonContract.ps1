@@ -15,6 +15,22 @@ $PythonGitlink = 'external/wss-py-wrapper'
 $PythonPluginPath = 'Cs_Libraries'
 $PythonProjectionFiles = @($WssUniversalFiles)
 
+function Get-PythonProjectionFiles($Record) {
+    $contract = if ($Record.PSObject.Properties['universal_contract']) { [string]$Record.universal_contract } else { 'legacy-v1' }
+    $expected = @(Get-WssUniversalFiles $contract)
+    if ($Record.files.Count -ne $expected.Count -or @(Compare-Object $expected @($Record.files.source) -CaseSensitive).Count) {
+        throw 'Projection must match its declared exact universal contract; macOS backend files cannot be omitted.'
+    }
+    $expected
+}
+function Get-PythonProducerContract([string]$Commit) {
+    Assert-PythonSha $Commit
+    $content = Invoke-PythonGh @('api',"repos/cwru-non-academic/WSSCore/contents/tools/ArtifactBuild/manifests/universal.json?ref=$Commit") | ConvertFrom-Json
+    if ($content.encoding -cne 'base64') { throw 'Unexpected producer manifest encoding.' }
+    $manifest = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($content.content)) | ConvertFrom-Json
+    Get-WssUniversalContract @($manifest.files)
+}
+
 function Invoke-PythonGh([string[]]$Arguments) {
     $response = & gh @Arguments
     if ($LASTEXITCODE -ne 0) { throw "GitHub operation failed: $($Arguments[0..([Math]::Min(1,$Arguments.Count-1))] -join ' ')" }
@@ -50,9 +66,9 @@ function Get-PythonProjectionDigest($Files) {
 function Assert-PythonProjection([string]$Root, $Record) {
     if ($Record.schema -cne 'wss-python-projection/v1') { throw 'Invalid Python payload schema.' }
     Assert-PythonCandidate $Record.candidate
+    $expected = @(Get-PythonProjectionFiles $Record)
     $actual = @(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object { [IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/') })
-    if (@(Compare-Object $PythonProjectionFiles $actual -CaseSensitive).Count -ne 0 -or $Record.files.Count -ne $PythonProjectionFiles.Count -or
-        @(Compare-Object $PythonProjectionFiles @($Record.files.source) -CaseSensitive).Count -ne 0) { throw 'Exact full universal inventory required; no fallback/extra files.' }
+    if ($actual.Count -ne $expected.Count -or @(Compare-Object $expected $actual -CaseSensitive).Count -ne 0) { throw 'Exact full universal inventory required; no fallback/extra files.' }
     foreach ($item in $Record.files) {
         if ((Get-FileHash -LiteralPath (Join-Path $Root $item.source)).Hash.ToLowerInvariant() -cne $item.sha256) { throw "Payload hash mismatch: $($item.source)" }
     }
@@ -62,16 +78,17 @@ function New-PythonProjection([string]$ArtifactRoot, [string]$WrapperRoot, [stri
     Assert-PythonCandidate $Candidate
     if (Test-Path -LiteralPath $Destination) { throw 'Payload destination must be new.' }
     $inventory = @(Get-ChildItem -LiteralPath $ArtifactRoot -Recurse -File | ForEach-Object { [IO.Path]::GetRelativePath($ArtifactRoot,$_.FullName).Replace('\','/') })
-    if (@(Compare-Object $PythonProjectionFiles $inventory -CaseSensitive).Count -ne 0) { throw 'Exact full universal inventory required.' }
+    $contract = Get-WssUniversalContract $inventory
+    $expected = @(Get-WssUniversalFiles $contract)
     New-Item -ItemType Directory -Path $Destination | Out-Null
     $files = @()
-    foreach ($source in $PythonProjectionFiles) {
+    foreach ($source in $expected) {
         $target = Join-Path $Destination $source
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         Copy-Item -LiteralPath (Join-Path $ArtifactRoot $source) -Destination $target
         $files += [ordered]@{ source=$source; sha256=(Get-FileHash -LiteralPath $target).Hash.ToLowerInvariant() }
     }
-    $record = [pscustomobject][ordered]@{ schema='wss-python-projection/v1'; candidate=$Candidate; projection_sha256=(Get-PythonProjectionDigest $files); files=$files }
+    $record = [pscustomobject][ordered]@{ schema='wss-python-projection/v1'; universal_contract=$contract; candidate=$Candidate; projection_sha256=(Get-PythonProjectionDigest $files); files=$files }
     Assert-PythonProjection $Destination $record
     $record
 }
@@ -105,8 +122,9 @@ function Assert-PythonSource([string]$Root,[string]$Sha,[switch]$IgnoreSubmodule
     if ($IgnoreSubmodule) { $statusArguments+='--ignore-submodules=all' }
     if (@(Invoke-PythonGit $Root $statusArguments).Count -ne 0) { throw 'Source checkout must be clean before staging the disposable harness.' }
 }
-function Get-PythonAllowedWrapperPaths {
-    @($PythonProjectionFiles | ForEach-Object { "$PythonPluginPath/$_" }) + @('.github/python-candidate.json')
+function Get-PythonAllowedWrapperPaths($Record=$null) {
+    $files = if ($null -ne $Record) { @(Get-PythonProjectionFiles $Record) } else { @($WssMacOSUniversalFiles) }
+    @($files | ForEach-Object { "$PythonPluginPath/$_" }) + @('.github/python-candidate.json')
 }
 function Assert-PythonDiff([string[]]$Paths,[string[]]$Allowed) {
     if ($Paths.Count -eq 0 -or @($Paths | Where-Object { $_ -cnotin $Allowed }).Count -gt 0) { throw 'Empty or out-of-scope promotion diff.' }

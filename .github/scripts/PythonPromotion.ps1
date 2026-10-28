@@ -22,12 +22,18 @@ function Assert-PythonProducer($Candidate) {
     if ($compare.status -cnotin @('ahead','identical')) { throw 'Producer commit is not contained in Core dev.' }
     $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$($Candidate.repository)/actions/runs/$($Candidate.run_id)/jobs?per_page=100&filter=latest") | ConvertFrom-Json
     $jobs=@($pages | ForEach-Object { $_.jobs })
-    foreach ($name in @('Build and validate artifacts','Core conformance','Serial consumer (Windows)','Serial consumer (macOS)','Serial consumer (Linux)','BLE consumer (Windows)','BLE consumer (Linux)','Core consumer (Windows)','Core consumer (macOS)','Core consumer (Linux)','Start routine downstream validation')) {
-        $matching=@($jobs | Where-Object { $_.name -ceq $name })
-        if ($matching.Count -ne 1 -or $matching[0].conclusion -cne 'success') { throw "Required Core producer job missing/skipped/failed: $name" }
-    }
+    Assert-PythonProducerJobs $jobs (Get-PythonProducerContract $Candidate.commit)
     $artifact=Invoke-PythonGh @('api',"repos/$($Candidate.repository)/actions/artifacts/$($Candidate.artifact_id)") | ConvertFrom-Json
     if ($artifact.expired -or $artifact.name -cne 'universal-release-assets' -or [string]$artifact.workflow_run.id -cne [string]$Candidate.run_id -or $artifact.workflow_run.head_sha -cne $Candidate.commit) { throw 'Wrong/expired producer artifact.' }
+}
+function Assert-PythonProducerJobs($Jobs,[string]$Contract) {
+    $required = @('Build and validate artifacts','Core conformance','Serial consumer (Windows)','Serial consumer (macOS)','Serial consumer (Linux)','BLE consumer (Windows)','BLE consumer (Linux)','Core consumer (Windows)','Core consumer (macOS)','Core consumer (Linux)','Start routine downstream validation')
+    $null = @(Get-WssUniversalFiles $Contract)
+    if ($Contract -ceq 'macos-ble-v1') { $required += @('Build macOS universal BLE bridge','BLE consumer (macOS arm64)','BLE consumer (macOS x86_64)') }
+    foreach ($name in $required) {
+        $matching=@($Jobs | Where-Object { $_.name -ceq $name })
+        if ($matching.Count -ne 1 -or $matching[0].conclusion -cne 'success') { throw "Required Core producer job missing/skipped/failed: $name" }
+    }
 }
 function Get-PythonHead([string]$Repository) {
     $branch=Invoke-PythonGh @('api',"repos/$Repository/branches/dev") | ConvertFrom-Json
@@ -128,7 +134,8 @@ function Get-PythonEvidenceFiles([ValidateSet('wrapper','cli','ros')][string]$Ro
     @('evidence.json','results.xml','dotnet.log','projection.json')
     if ($Role -ceq 'ros') { @('ros-model.json','ros-native-symlink.json','ros-native-copy.json') }
 }
-function Get-PythonEvidenceJobs([ValidateSet('wrapper','cli','ros')][string]$Role) {
+function Get-PythonEvidenceJobs([ValidateSet('wrapper','cli','ros')][string]$Role,[string]$Contract='legacy-v1') {
+    $null = @(Get-WssUniversalFiles $Contract)
     if ($Role -ceq 'wrapper') { 'Preflight behavioral tests' }
     elseif ($Role -ceq 'cli') { 'CLI general conformance' }
     else {
@@ -136,6 +143,25 @@ function Get-PythonEvidenceJobs([ValidateSet('wrapper','cli','ros')][string]$Rol
         'ROS model and contract fixtures (Windows development host)'
         'ROS colcon and installed DDS fixture (Humble development baseline)'
     }
+    if ($Contract -ceq 'macos-ble-v1') {
+        $prefix = if ($Role -ceq 'wrapper') { 'Preflight compatibility' } elseif ($Role -ceq 'cli') { 'CLI platform compatibility' } else { 'ROS platform compatibility' }
+        foreach ($platform in @('Windows','Ubuntu','macOS')) { "$prefix ($platform)" }
+    }
+}
+function Assert-PythonPlatformEvidence($Proof,$Smoke,$Canonical,$Candidate,[string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Role,[string]$FixtureSha,[string]$Platform) {
+    Assert-PythonSameCandidate $Proof.candidate $Candidate
+    $expectedCli = if ($Role -ceq 'cli') { $SourceSha } else { '' }
+    if ($Proof.schema -cne 'wss-python-platform/v1' -or $Proof.mode -cne 'candidate' -or
+        $Proof.wrapper_sha -cne $Canonical.wrapper_sha -or $Proof.cli_sha -cne $expectedCli -or
+        $Proof.fixture_sha -cne $FixtureSha -or $Proof.projection_sha256 -cne $Canonical.projection_sha256 -or
+        $Proof.universal_contract -cne 'macos-ble-v1' -or $Proof.run_repository -cne $Repository -or
+        [string]$Proof.run_id -cne $RunId -or $Proof.run_sha -cne $SourceSha -or
+        !$Proof.ble.StartsWith('passed:',[StringComparison]::Ordinal) -or
+        $Smoke.contract -cne 'macos-ble-v1' -or !$Smoke.macos_ble_declared -or $Smoke.physical_io -ne $false -or
+        [bool]$Smoke.cli_routing -ne ($Role -ceq 'cli') -or !$Smoke.ble.StartsWith('passed:',[StringComparison]::Ordinal)) {
+        throw "Candidate $Platform platform evidence does not prove the exact accepted source/payload/backend."
+    }
+    if ($Platform -ceq 'macOS' -and $Proof.os -cnotlike 'macOS *') { throw 'macOS activation evidence must execute on macOS.' }
 }
 function Assert-PythonRosReports($Evidence,[string]$Root) {
     if ($Evidence.native_ros_distribution -cne 'humble') { throw 'Expected the separately identified Humble development baseline.' }
@@ -163,9 +189,13 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     else { $application=Get-PythonApplication $Role; $expectedRepository=$application.repository; $requiredName=$application.acceptance; $sourceField=$application.source_field }
     if ($Repository -cne $expectedRepository) { throw 'Role/repository evidence mismatch.' }
     $null=Wait-PythonRun $Repository $RunId $SourceSha 'wss-preflight.yml' 'workflow_dispatch'
+    $contract = Get-PythonProducerContract $Candidate.commit
     $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
-    foreach ($requiredName in @(Get-PythonEvidenceJobs $Role)) {
-        $required=@($pages | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq $requiredName })
+    foreach ($requiredName in @(Get-PythonEvidenceJobs $Role $contract)) {
+        $isPlatform = $requiredName -cmatch '^(Preflight compatibility|CLI platform compatibility|ROS platform compatibility) \('
+        $required=@($pages | ForEach-Object { $_.jobs } | Where-Object {
+            if ($isPlatform) { ($_.name -split ' / ')[-1] -ceq $requiredName } else { $_.name -ceq $requiredName }
+        })
         if ($required.Count -ne 1 -or $required[0].conclusion -cne 'success') { throw "Required candidate job missing/skipped/failed: $requiredName" }
     }
     if (Test-Path -LiteralPath $Root) { throw 'Evidence download destination must be new.' }
@@ -187,9 +217,21 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     if ($Role -ceq 'ros') { Assert-PythonRosReports $e $Root }
     $projection=Get-Content -LiteralPath (Join-Path $Root 'projection.json') -Raw | ConvertFrom-Json
     Assert-PythonSameCandidate $projection.candidate $Candidate
-    if ($projection.files.Count -ne $PythonProjectionFiles.Count -or @(Compare-Object $PythonProjectionFiles @($projection.files.source) -CaseSensitive).Count -ne 0 -or
-        $projection.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $projection.files) -cne $e.projection_sha256 -or
+    $expectedFiles = @(Get-PythonProjectionFiles $projection)
+    if ((Get-WssUniversalContract $expectedFiles) -cne $contract) { throw 'Projection contract differs from the exact producer manifest.' }
+    if ($projection.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $projection.files) -cne $e.projection_sha256 -or
         $projection.projection_sha256 -cne $e.projection_sha256) { throw 'Projection/evidence mismatch.' }
+    if ($contract -ceq 'macos-ble-v1') {
+        foreach ($platform in @('Windows','Ubuntu','macOS')) {
+            $platformRoot = Join-Path $Root "platform-$platform"
+            $null=Invoke-PythonGh @('run','download',$RunId,'--repo',$Repository,'--name',"python-preflight-platform-$platform",'--dir',$platformRoot)
+            $proof = Get-Content (Join-Path $platformRoot 'platform.json') -Raw | ConvertFrom-Json
+            $smokePath = Join-Path $platformRoot 'python-smoke.json'
+            if ((Get-FileHash $smokePath).Hash.ToLowerInvariant() -cne $proof.python_smoke_sha256) { throw 'Platform smoke evidence hash mismatch.' }
+            $smoke = Get-Content $smokePath -Raw | ConvertFrom-Json
+            Assert-PythonPlatformEvidence $proof $smoke $e $Candidate $Repository $RunId $SourceSha $Role $Config.fixture_commit $platform
+        }
+    }
     $e
 }
 function Assert-PythonApproval($Approval,[string]$EvidenceRoot,$Config) {
@@ -253,12 +295,12 @@ function New-PythonFanoutApproval($Candidate,[string]$WrapperSha,[string]$CliSha
 }
 function Assert-PythonRemoteProjection([string]$Sha,$Record) {
     Assert-PythonSha $Sha
-    if ($Record.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $Record.files) -cne $Record.projection_sha256 -or
-        @(Compare-Object $PythonProjectionFiles @($Record.files.source) -CaseSensitive).Count) { throw 'Invalid merged projection inventory/digest.' }
+    $projectionFiles = @(Get-PythonProjectionFiles $Record)
+    if ($Record.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $Record.files) -cne $Record.projection_sha256) { throw 'Invalid merged projection inventory/digest.' }
     $tree=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/git/trees/${Sha}?recursive=1") | ConvertFrom-Json
     if ($tree.truncated) { throw 'Merged wrapper tree response is truncated.' }
     $actual=@($tree.tree | Where-Object { $_.type -ceq 'blob' -and $_.path.StartsWith($PythonPluginPath+'/',[StringComparison]::Ordinal) } | ForEach-Object { $_.path })
-    $expected=@($PythonProjectionFiles | ForEach-Object { "$PythonPluginPath/$_" })
+    $expected=@($projectionFiles | ForEach-Object { "$PythonPluginPath/$_" })
     if (@(Compare-Object $expected $actual -CaseSensitive).Count) { throw 'Merged wrapper payload inventory differs.' }
     foreach ($file in $Record.files) {
         $path="$PythonPluginPath/$($file.source)"

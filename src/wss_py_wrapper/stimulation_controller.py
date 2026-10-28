@@ -12,7 +12,7 @@ import time
 
 from .config import WssConfig
 from .log_sink import FileLogSink, install_csharp_log_sink
-from .wss_loader import WssLoader, collect_dlls
+from .wss_loader import WssLoader, collect_dlls, load_ble_backend
 
 
 def _resolve_log_type():
@@ -572,6 +572,18 @@ class StimulationController:
                     self._net_types["TestModeTransportOptions"]()
                 )
             return self._net_types["TestModeTransport"]()
+
+        if self._config.transport == "ble":
+            load_ble_backend(self._config.cs_lib_dir)
+            from Wss.Transports import BleNusTransport, BleNusTransportOptions  # type: ignore
+
+            options = BleNusTransportOptions()
+            options.AutoSelectDevice = self._config.ble_auto
+            if self._config.ble_device_name:
+                options.DeviceName = self._config.ble_device_name
+            if self._config.ble_device_id:
+                options.DeviceId = self._config.ble_device_id
+            return BleNusTransport(options)
 
         transport_class = self._net_types["SerialPortTransport"]
         if "SerialPortTransportOptions" in self._net_types:
