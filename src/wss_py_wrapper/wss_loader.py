@@ -71,7 +71,10 @@ class WssLoader:
                 )
                 if runtime_dll.is_file():
                     dll = runtime_dll
-            clr.AddReference(str(dll))
+            # pythonnet 3.0.5 appends .dll during path probing. Passing a Unix
+            # absolute path with the suffix can instead be parsed as an assembly
+            # name and throw before its full-path fallback is reached.
+            clr.AddReference(str(dll.resolve().with_suffix("")))
 
 
 def collect_dlls(cs_lib_dir: Path) -> list[Path]:
