@@ -39,6 +39,7 @@ jobs:
             WSSCore
             Python_WSS_Integration_Lib
             CLI_Python_WSS_Application
+            ROS_Python_WSS_Application
           permission-contents: read
           permission-actions: read
           permission-pull-requests: read
@@ -60,6 +61,7 @@ jobs:
           repositories: |
             Python_WSS_Integration_Lib
             CLI_Python_WSS_Application
+            ROS_Python_WSS_Application
           permission-actions: write
 
       - name: Verify exact candidate, both runtime preflights and sources

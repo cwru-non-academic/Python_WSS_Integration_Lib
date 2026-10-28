@@ -11,6 +11,16 @@ concurrency:
   group: python-wrapper-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  contracts:
+    name: Promotion safety contracts
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify versioned fan-out and rejection contracts
+        shell: pwsh
+        run: ./.github/scripts/tests/Test-PythonFanout.ps1
   validate:
     uses: ./.github/workflows/_python-validation.yml
     with:
@@ -22,10 +32,13 @@ jobs:
   acceptance:
     name: Integration behavioral tests
     if: always()
-    needs: validate
+    needs: [validate, contracts]
     runs-on: ubuntu-latest
     steps:
       - name: Require actual committed-state conformance
         env:
           VALIDATION_RESULT: ${{ needs.validate.result }}
-        run: test "$VALIDATION_RESULT" = success
+          CONTRACT_RESULT: ${{ needs.contracts.result }}
+        run: |
+          test "$VALIDATION_RESULT" = success
+          test "$CONTRACT_RESULT" = success
