@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory)][ValidateSet('wrapper','cli')][string]$Role,
+    [Parameter(Mandatory)][ValidateSet('wrapper','cli','ros')][string]$Role,
     [Parameter(Mandatory)][string]$WorkRoot,
     [Parameter(Mandatory)][string]$RepositoryRoot,
     [string]$CandidateJson='',
@@ -34,52 +34,48 @@ if ($Role -ceq 'wrapper') {
         exit 0
     }
     $cliSha=Get-PythonHead $PythonCliRepository
+    $rosSha=Get-PythonHead $PythonRosRepository
     if ((Get-PythonHead $PythonWrapperRepository) -cne $source) { throw 'Wrapper dev advanced before preflight.' }
     if ($ValidateOnly) {
-        @{no_op=$false;role=$Role;source_sha=$source;cli_source_sha=$cliSha} | ConvertTo-Json | Set-Content (Join-Path $WorkRoot 'prepared.json')
+        @{no_op=$false;role=$Role;source_sha=$source;cli_source_sha=$cliSha;ros_source_sha=$rosSha} | ConvertTo-Json | Set-Content (Join-Path $WorkRoot 'prepared.json')
         'no_op=false' >> $env:GITHUB_OUTPUT
         Write-Output 'Producer, archive, projection and source validated before preflight write credentials.'
         exit 0
     }
-    $wrapperRun=Start-PythonPreflight $PythonWrapperRepository $candidate $source $cliSha
-    $cliRun=Start-PythonPreflight $PythonCliRepository $candidate $source $cliSha
-    $approval=[ordered]@{
-        schema='wss-python-promotion/v1'; candidate=$candidate
-        wrapper=@{source_sha=$source;preflight_run_id=[string]$wrapperRun.id}
-        cli=@{source_sha=$cliSha;preflight_run_id=[string]$cliRun.id}
-        fixture=@{commit=$config.fixture_commit;sha256=$config.fixture_sha256}
-        projection_sha256=$projection.projection_sha256
-    }
+    $approval=New-PythonFanoutApproval $candidate $source $cliSha $rosSha $config
+    $approval.projection_sha256=$projection.projection_sha256
     $approval | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $WorkRoot 'approval.json')
     $approval=Read-PythonApproval (Join-Path $WorkRoot 'approval.json')
     Assert-PythonApproval $approval (Join-Path $WorkRoot 'evidence') $config
     $projection | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $WorkRoot 'projection.json')
 } else {
-    if ($env:GITHUB_REPOSITORY -cne $PythonCliRepository -or !$ApprovalJson -or $CandidateJson) { throw 'Invalid CLI promotion inputs/repository.' }
+    $application=Get-PythonApplication $Role
+    if ($env:GITHUB_REPOSITORY -cne $application.repository -or !$ApprovalJson -or $CandidateJson) { throw 'Invalid application promotion inputs/repository.' }
     [IO.File]::WriteAllText((Join-Path $WorkRoot 'approval.json'),$ApprovalJson)
     $approval=Read-PythonApproval (Join-Path $WorkRoot 'approval.json')
+    if ($Role -ceq 'ros') { Assert-PythonFanoutApproval $approval }
     $candidate=$approval.candidate
     Assert-PythonApproval $approval (Join-Path $WorkRoot 'evidence') $config
     Assert-PythonMergedWrapper $WrapperMergeSha $WrapperPr $approval
-    $entry=(Invoke-PythonGit $RepositoryRoot @('ls-tree','HEAD','--',$PythonGitlink)) -join ''
-    if ($entry -ceq "160000 commit $WrapperMergeSha`t$PythonGitlink") {
+    $entry=(Invoke-PythonGit $RepositoryRoot @('ls-tree','HEAD','--',$application.gitlink)) -join ''
+    if ($entry -ceq "160000 commit $WrapperMergeSha`t$($application.gitlink)") {
         @{no_op=$true;role=$Role;source_sha=$source} | ConvertTo-Json | Set-Content (Join-Path $WorkRoot 'prepared.json')
         'no_op=true' >> $env:GITHUB_OUTPUT
         Write-Output 'Verified existing accepted gitlink; no PR.'
         exit 0
     }
-    if ((Get-PythonHead $PythonCliRepository) -cne $source) { throw 'CLI dev advanced before merged-wrapper preflight.' }
+    if ((Get-PythonHead $application.repository) -cne $source) { throw 'Application dev advanced before merged-wrapper preflight.' }
     if ($ValidateOnly) {
         @{no_op=$false;role=$Role;source_sha=$source;wrapper_merge_sha=$WrapperMergeSha;wrapper_pr=$WrapperPr} | ConvertTo-Json | Set-Content (Join-Path $WorkRoot 'prepared.json')
         'no_op=false' >> $env:GITHUB_OUTPUT
-        Write-Output 'Existing approval and actual reviewed wrapper merge validated before CLI preflight write credentials.'
+        Write-Output 'Existing approval and actual reviewed wrapper merge validated before application preflight write credentials.'
         exit 0
     }
-    $postMerge=Start-PythonPreflight $PythonCliRepository $candidate $WrapperMergeSha $source
-    $cliPreflightId=[string]$postMerge.id
-    Assert-PythonMergedCliPreflight $approval $WrapperMergeSha $source $cliPreflightId (Join-Path $WorkRoot 'merged-cli-evidence') $config
+    $postMerge=Start-PythonPreflight $application.repository $candidate $WrapperMergeSha $source
+    $applicationPreflightId=[string]$postMerge.id
+    Assert-PythonMergedApplicationPreflight $approval $Role $WrapperMergeSha $source $applicationPreflightId (Join-Path $WorkRoot ('merged-'+$Role+'-evidence')) $config
 }
 $prepared=@{no_op=$false;role=$Role;source_sha=$source;wrapper_merge_sha=$WrapperMergeSha;wrapper_pr=$WrapperPr}
-if ($Role -ceq 'cli') { $prepared.cli_preflight_run_id=$cliPreflightId }
+if ($Role -cne 'wrapper') { $prepared.application_preflight_run_id=$applicationPreflightId; if ($Role -ceq 'cli') { $prepared.cli_preflight_run_id=$applicationPreflightId } }
 $prepared | ConvertTo-Json | Set-Content (Join-Path $WorkRoot 'prepared.json')
 'no_op=false' >> $env:GITHUB_OUTPUT

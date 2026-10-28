@@ -3,6 +3,14 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/Universal-WssFiles.ps1"
 $PythonWrapperRepository = 'cwru-non-academic/Python_WSS_Integration_Lib'
 $PythonCliRepository = 'cwru-non-academic/CLI_Python_WSS_Application'
+$PythonRosRepository = 'cwru-non-academic/ROS_Python_WSS_Application'
+$PythonApplications = [ordered]@{
+    cli = [pscustomobject]@{ role='cli'; repository=$PythonCliRepository; gitlink='external/wss-py-wrapper'; source_field='cli_sha'; acceptance='CLI general conformance' }
+    ros = [pscustomobject]@{ role='ros'; repository=$PythonRosRepository; gitlink='HFI_WSS_Python_Interface'; source_field='ros_sha'; acceptance='ROS compatibility' }
+}
+function Get-PythonApplication([ValidateSet('cli','ros')][string]$Role) {
+    $PythonApplications[$Role]
+}
 $PythonGitlink = 'external/wss-py-wrapper'
 $PythonPluginPath = 'Cs_Libraries'
 $PythonProjectionFiles = @($WssUniversalFiles)

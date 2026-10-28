@@ -1,5 +1,22 @@
 # Python repository conformance automation
 
+The versioned CLI/ROS fan-out extension is specified in
+[`PYTHON_FANOUT_CONTRACT.md`](PYTHON_FANOUT_CONTRACT.md). New wrapper promotions
+require `wss-python-promotion/v2` with independent wrapper, CLI and ROS candidate
+preflight proofs. The existing CLI workflow inputs and evidence remain compatible;
+legacy v1 approvals cannot authorize a new wrapper or ROS promotion. Both apps
+independently validate the actual human-merged wrapper, run a fresh preflight and
+open their own gitlink-only dev PR. The dispatcher uses separate matrix jobs with
+`fail-fast: false`, so failure in one app does not cancel the other.
+
+Deploy the integration fan-out tools and ROS workflow baseline through reviewed
+dev/main PRs before enabling that chain. The existing App installation must allow
+ROS repository access and the same delayed scoped permissions used for CLI.
+No App grants, credentials or security settings are changed here. A missing ROS
+baseline, failed ROS evidence or missing App capability blocks changed-payload
+promotion; it is never relabeled as CLI acceptance. Normal CI also runs the
+`Promotion safety contracts` check for schema, marker, scope and fan-out failures.
+
 ## Production path and unchanged cases
 
 The pinned C# fixture at `CSharp_WSS_Integration_Lib` commit
@@ -77,12 +94,12 @@ exact unexpired artifact ID, archive checksum and downstream default-branch
 readiness before minting an existing App dispatch token. Existing C# and Unity
 handoffs remain separate.
 
-A changed payload requires BOTH immutable-source Python integration and CLI
-candidate preflights. Only validated matching evidence allows a dependency-only
+A changed payload requires independent immutable-source wrapper, CLI and ROS
+candidate preflights. Only validated matching v2 evidence allows a dependency-only
 integration PR. After its human merge, the dispatcher verifies the actual merged
-payload bytes, approval marker and final-head normal PR CI. The CLI revalidates
-that proof, runs a fresh preflight against the actual merged wrapper and current
-CLI source, then opens a gitlink-only dev PR. The two Python-specific approval
+payload bytes, approval marker and final-head normal PR CI. Each application
+independently revalidates that proof, preflights the actual merged wrapper and its
+own current source, then opens its own gitlink-only dev PR. Role-specific approval
 markers bind those exact sources and runs. No automatic merges/releases occur.
 
 Identical payloads preserve committed provenance and produce a verified no-op.
@@ -93,7 +110,7 @@ Humans must publish the integration and CLI dev baselines to default **main**
 before merging the Core handoff. GitHub registers dispatch/completion workflows
 from the default branch. These are human merge gates, not an observed propagation
 success. Existing `WSS_GITHUB_APP_ID` / `WSS_GITHUB_APP_PRIVATE_KEY` configuration
-and App access to both Python repositories are required but are not created or
+and App access to the integration, CLI and ROS repositories are required but are not created or
 changed here. A missing capability stops that hop with an actionable failure.
 
 The initial payload is the independently downloaded Core run `39092192696`,
