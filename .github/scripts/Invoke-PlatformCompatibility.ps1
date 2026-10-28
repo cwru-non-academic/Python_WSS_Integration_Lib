@@ -65,15 +65,18 @@ try {
 $env:WSS_ARTIFACT_DIR = $stagedPayload
 $env:WSS_BLE_ARTIFACT_DIR = $stagedPayload
 $project = Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
+$buildRoot = Join-Path $OutputRoot 'shared-build'
 @{sdk=@{version=$config.dotnet_sdk;rollForward='disable'}} | ConvertTo-Json | Set-Content (Join-Path $OutputRoot 'global.json')
 Push-Location $OutputRoot
 try {
-    & dotnet test $project -c Release --filter 'FullyQualifiedName~SerialRuntimeSelectionTests|FullyQualifiedName~BleBackendLoadingTests' --logger 'trx;LogFileName=platform.trx' --results-directory $OutputRoot -p:TreatWarningsAsErrors=true
+    & dotnet test $project -c Release --artifacts-path $buildRoot --filter 'FullyQualifiedName~SerialRuntimeSelectionTests|FullyQualifiedName~BleBackendLoadingTests' --logger 'trx;LogFileName=platform.trx' --results-directory $OutputRoot -p:TreatWarningsAsErrors=true
     if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform compatibility tests failed.' }
 } finally { Pop-Location }
-& (Join-Path $FixtureRoot '.github/scripts/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot (Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0')
+$testOutputs = @(Get-ChildItem -LiteralPath (Join-Path $buildRoot 'bin/Wss.CSharpImplementation.Tests') -Filter 'Wss.CSharpImplementation.Tests.dll' -Recurse -File)
+if ($testOutputs.Count -ne 1) { throw 'Expected one isolated shared platform build output.' }
+$builtPayload = $testOutputs[0].Directory.FullName
+& (Join-Path $FixtureRoot '.github/scripts/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload
 if (!$?) { throw 'Platform build payload propagation failed.' }
-$builtPayload = Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
 foreach ($relative in @(Get-PythonProjectionFiles $projection)) {
     if ($relative -ceq 'System.IO.Ports.dll') { continue } # Verified NuGet runtime selection above.
     if ((Get-FileHash (Join-Path $stagedPayload $relative)).Hash -cne (Get-FileHash (Join-Path $builtPayload $relative)).Hash) {
