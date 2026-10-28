@@ -154,3 +154,9 @@ candidate preflights, versioned producer provenance, CLI/ROS fan-out and App
 permissions are unchanged. PRs to both main and dev, and pushes to both branches,
 run ordinary CI. CLI platform tools are pinned to an immutable reviewed source;
 the application still consumes its own committed wrapper gitlink.
+
+The first Unix matrix run exposed pythonnet 3.0.5 treating suffixed absolute DLL
+paths as assembly names. The production loader now gives its path probe the
+absolute path without the suffix; pythonnet appends `.dll` and loads that same
+file before attempting assembly-name lookup. The installed-package checks retain
+this regression coverage on Windows, Ubuntu and macOS.

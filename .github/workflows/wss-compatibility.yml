@@ -47,7 +47,7 @@ jobs:
           "fixture=$($config.fixture_commit)" >> $env:GITHUB_OUTPUT
           "sdk=$($config.dotnet_sdk)" >> $env:GITHUB_OUTPUT
   conformance:
-    needs: prerequisites
+    needs: [prerequisites, contracts]
     name: Integration behavioral tests
     runs-on: windows-2022
     timeout-minutes: 20
