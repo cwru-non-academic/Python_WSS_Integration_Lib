@@ -146,14 +146,18 @@ source checkout. These are platform/package checks, not repetitions of the
 emulator scenarios. Python wheels contain source; the verified universal runtime
 payload is staged beside the installed package, matching the documented layout.
 
-macOS uses an x64 runner to match the committed universal distribution. Its BLE
-backend loading test explicitly skips because the backend is unimplemented;
-this is recorded in TRX and platform.json and does not indicate BLE support.
+macOS uses an x64 runner. The exact legacy payload explicitly reports unsupported
+BLE; a payload declaring the macOS BLE inventory must pass managed activation and
+native ABI checks, and its shared C# BLE test must pass without a skip. See
+[`MACOS_BLE_RECEIVER.md`](MACOS_BLE_RECEIVER.md) for the two exact contracts and
+the canonical producer/receiver preparation boundary.
 No check opens a physical serial port or connects to a BLE device. The existing
 candidate preflights, versioned producer provenance, CLI/ROS fan-out and App
 permissions are unchanged. PRs to both main and dev, and pushes to both branches,
 run ordinary CI. CLI platform tools are pinned to an immutable reviewed source;
-the application still consumes its own committed wrapper gitlink.
+the application still consumes its own committed wrapper gitlink. Candidate
+preflights also run the three platform jobs, and new macOS payload proof requires
+their source/hash-bound native smoke evidence.
 
 The first Unix matrix run exposed pythonnet 3.0.5 treating suffixed absolute DLL
 paths as assembly names. The production loader now gives its path probe the

@@ -46,6 +46,10 @@ class WssConfig:
     :param max_setup_tries: Maximum number of setup retries used by the .NET core.
     :param tick_interval_ms: Background tick interval in milliseconds.
     :param conformance_mode: Explicitly use Core's in-memory conformance emulator.
+    :param transport: Physical transport selection, ``serial`` (default) or ``ble``.
+    :param ble_device_name: Exact advertised BLE device name.
+    :param ble_device_id: Explicit BLE device identifier, taking precedence over name.
+    :param ble_auto: Explicitly permit BLE device auto-selection.
     """
 
     config_path: Path
@@ -56,10 +60,23 @@ class WssConfig:
     max_setup_tries: int = 5
     tick_interval_ms: int = 10
     conformance_mode: bool = False
+    transport: str = "serial"
+    ble_device_name: str | None = None
+    ble_device_id: str | None = None
+    ble_auto: bool = False
 
     def __post_init__(self) -> None:
         if self.conformance_mode and self.test_mode:
             raise ValueError("Select either conformance_mode or test_mode.")
+        if self.transport not in ("serial", "ble"):
+            raise ValueError("transport must be serial or ble.")
+        if self.transport == "ble":
+            if self.test_mode or self.conformance_mode or self.serial_port:
+                raise ValueError("BLE cannot be combined with serial, test or conformance selection.")
+            if not (self.ble_auto or self.ble_device_name or self.ble_device_id):
+                raise ValueError("BLE requires a device name, device id or explicit auto-selection.")
+        elif self.ble_auto or self.ble_device_name or self.ble_device_id:
+            raise ValueError("BLE device options require transport='ble'.")
 
     @classmethod
     def default(cls, main_file: Path) -> "WssConfig":

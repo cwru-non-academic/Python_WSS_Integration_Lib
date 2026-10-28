@@ -1,0 +1,100 @@
+name: Python candidate platform validation
+on:
+  workflow_call:
+    inputs:
+      role: {type: string, required: true}
+      wrapper_sha: {type: string, required: true}
+      cli_sha: {type: string, default: ''}
+      fixture_sha: {type: string, required: true}
+      sdk: {type: string, required: true}
+      candidate_json: {type: string, required: true}
+    secrets:
+      WSS_GITHUB_APP_PRIVATE_KEY: {required: true}
+permissions:
+  contents: read
+jobs:
+  compatibility:
+    name: ${{ inputs.role == 'wrapper' && 'Preflight compatibility' || 'CLI platform compatibility' }} (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Windows, os: windows-2022}
+          - {name: Ubuntu, os: ubuntu-latest}
+          - {name: macOS, os: macos-15-intel}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.sdk }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build==1.2.2.post1 pythonnet==3.0.5
+      - uses: actions/create-github-app-token@v2
+        id: read
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ inputs.wrapper_sha }}
+          path: wrapper
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: inputs.role == 'cli'
+        with:
+          repository: cwru-non-academic/CLI_Python_WSS_Application
+          ref: ${{ inputs.cli_sha }}
+          path: cli
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/CSharp_WSS_Integration_Lib
+          ref: ${{ inputs.fixture_sha }}
+          path: fixture
+          persist-credentials: false
+      - name: Require canonical dev-push provenance and resolve the exact archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+          CANDIDATE_JSON: ${{ inputs.candidate_json }}
+        run: |
+          . ./wrapper/.github/scripts/PythonPromotion.ps1
+          $candidate = $env:CANDIDATE_JSON | ConvertFrom-Json
+          Assert-PythonProducer $candidate
+          ./wrapper/.github/scripts/Resolve-WssRelease.ps1 -RunId $candidate.run_id -ExpectedArtifactId $candidate.artifact_id -ExpectedCommit $candidate.commit -ArchiveName $candidate.archive -ExpectedSha256 $candidate.sha256 -OutputRoot "$env:RUNNER_TEMP/resolved"
+      - name: Verify candidate package, production transport selection and native ABI
+        shell: pwsh
+        env:
+          ROLE: ${{ inputs.role }}
+          WRAPPER_SHA: ${{ inputs.wrapper_sha }}
+          CLI_SHA: ${{ inputs.cli_sha }}
+        run: |
+          $options = @{
+            WrapperRoot = "$env:GITHUB_WORKSPACE/wrapper"
+            WrapperSha = $env:WRAPPER_SHA
+            FixtureRoot = "$env:GITHUB_WORKSPACE/fixture"
+            OutputRoot = "$env:RUNNER_TEMP/platform-results"
+            Mode = 'candidate'
+            ArtifactRoot = "$env:RUNNER_TEMP/resolved/extracted/WSS-Universal"
+            CandidatePath = "$env:RUNNER_TEMP/resolved/candidate.json"
+          }
+          if ($env:ROLE -ceq 'cli') { $options.CliRoot = "$env:GITHUB_WORKSPACE/cli"; $options.CliSha = $env:CLI_SHA }
+          ./wrapper/.github/scripts/Invoke-PlatformCompatibility.ps1 @options
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-preflight-platform-${{ matrix.name }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/platform-results/platform.json
+            ${{ runner.temp }}/platform-results/python-smoke.json
+            ${{ runner.temp }}/platform-results/platform.trx

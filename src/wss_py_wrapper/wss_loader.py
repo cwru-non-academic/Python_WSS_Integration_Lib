@@ -102,3 +102,25 @@ def collect_dlls(cs_lib_dir: Path) -> list[Path]:
         dlls = [p for p in dlls if p not in primary] + primary
 
     return dlls
+
+
+def load_ble_backend(cs_lib_dir: Path) -> None:
+    """Load the selected packaged BLE backend without initializing a radio.
+
+    Python's application base is the Python installation, so explicitly load the
+    backend beside this payload before the facade selects its shared factory.
+    Native dependencies remain under the owning backend directory.
+    """
+    platform = {"win32": "windows", "linux": "linux", "darwin": "macos"}.get(sys.platform)
+    if platform is None:
+        raise RuntimeError(f"Unsupported BLE platform: {sys.platform}")
+    names = {"windows": "Windows", "linux": "Linux", "macos": "MacOS"}
+    directory = cs_lib_dir / "backends" / platform
+    backend = directory / f"WSS.Transport.BLE.{names[platform]}.dll"
+    if not backend.is_file():
+        raise FileNotFoundError(f"Packaged {platform} BLE backend is missing: {backend}")
+    if platform == "macos" and not (directory / "libwss_macos_ble.dylib").is_file():
+        raise FileNotFoundError("Packaged macOS BLE native bridge is missing.")
+    dependencies = sorted(p for p in directory.glob("*.dll")
+                          if p != backend and p.name != "WssBleWindows.dll")
+    WssLoader([*dependencies, backend]).load()
