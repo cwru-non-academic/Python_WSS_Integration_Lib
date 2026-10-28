@@ -22,12 +22,18 @@ function Assert-PythonProducer($Candidate) {
     if ($compare.status -cnotin @('ahead','identical')) { throw 'Producer commit is not contained in Core dev.' }
     $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$($Candidate.repository)/actions/runs/$($Candidate.run_id)/jobs?per_page=100&filter=latest") | ConvertFrom-Json
     $jobs=@($pages | ForEach-Object { $_.jobs })
-    foreach ($name in @('Build and validate artifacts','Core conformance','Serial consumer (Windows)','Serial consumer (macOS)','Serial consumer (Linux)','BLE consumer (Windows)','BLE consumer (Linux)','Core consumer (Windows)','Core consumer (macOS)','Core consumer (Linux)','Start routine downstream validation')) {
-        $matching=@($jobs | Where-Object { $_.name -ceq $name })
-        if ($matching.Count -ne 1 -or $matching[0].conclusion -cne 'success') { throw "Required Core producer job missing/skipped/failed: $name" }
-    }
+    Assert-PythonProducerJobs $jobs (Get-PythonProducerContract $Candidate.commit)
     $artifact=Invoke-PythonGh @('api',"repos/$($Candidate.repository)/actions/artifacts/$($Candidate.artifact_id)") | ConvertFrom-Json
     if ($artifact.expired -or $artifact.name -cne 'universal-release-assets' -or [string]$artifact.workflow_run.id -cne [string]$Candidate.run_id -or $artifact.workflow_run.head_sha -cne $Candidate.commit) { throw 'Wrong/expired producer artifact.' }
+}
+function Assert-PythonProducerJobs($Jobs,[string]$Contract) {
+    $required = @('Build and validate artifacts','Core conformance','Serial consumer (Windows)','Serial consumer (macOS)','Serial consumer (Linux)','BLE consumer (Windows)','BLE consumer (Linux)','Core consumer (Windows)','Core consumer (macOS)','Core consumer (Linux)','Start routine downstream validation')
+    $null = @(Get-WssUniversalFiles $Contract)
+    if ($Contract -ceq 'macos-ble-v1') { $required += @('Build macOS universal BLE bridge','BLE consumer (macOS arm64)','BLE consumer (macOS x86_64)') }
+    foreach ($name in $required) {
+        $matching=@($Jobs | Where-Object { $_.name -ceq $name })
+        if ($matching.Count -ne 1 -or $matching[0].conclusion -cne 'success') { throw "Required Core producer job missing/skipped/failed: $name" }
+    }
 }
 function Get-PythonHead([string]$Repository) {
     $branch=Invoke-PythonGh @('api',"repos/$Repository/branches/dev") | ConvertFrom-Json
@@ -187,8 +193,9 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     if ($Role -ceq 'ros') { Assert-PythonRosReports $e $Root }
     $projection=Get-Content -LiteralPath (Join-Path $Root 'projection.json') -Raw | ConvertFrom-Json
     Assert-PythonSameCandidate $projection.candidate $Candidate
-    if ($projection.files.Count -ne $PythonProjectionFiles.Count -or @(Compare-Object $PythonProjectionFiles @($projection.files.source) -CaseSensitive).Count -ne 0 -or
-        $projection.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $projection.files) -cne $e.projection_sha256 -or
+    $expectedFiles = @(Get-PythonProjectionFiles $projection)
+    if ((Get-WssUniversalContract $expectedFiles) -cne (Get-PythonProducerContract $Candidate.commit)) { throw 'Projection contract differs from the exact producer manifest.' }
+    if ($projection.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $projection.files) -cne $e.projection_sha256 -or
         $projection.projection_sha256 -cne $e.projection_sha256) { throw 'Projection/evidence mismatch.' }
     $e
 }
@@ -253,12 +260,12 @@ function New-PythonFanoutApproval($Candidate,[string]$WrapperSha,[string]$CliSha
 }
 function Assert-PythonRemoteProjection([string]$Sha,$Record) {
     Assert-PythonSha $Sha
-    if ($Record.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $Record.files) -cne $Record.projection_sha256 -or
-        @(Compare-Object $PythonProjectionFiles @($Record.files.source) -CaseSensitive).Count) { throw 'Invalid merged projection inventory/digest.' }
+    $projectionFiles = @(Get-PythonProjectionFiles $Record)
+    if ($Record.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $Record.files) -cne $Record.projection_sha256) { throw 'Invalid merged projection inventory/digest.' }
     $tree=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/git/trees/${Sha}?recursive=1") | ConvertFrom-Json
     if ($tree.truncated) { throw 'Merged wrapper tree response is truncated.' }
     $actual=@($tree.tree | Where-Object { $_.type -ceq 'blob' -and $_.path.StartsWith($PythonPluginPath+'/',[StringComparison]::Ordinal) } | ForEach-Object { $_.path })
-    $expected=@($PythonProjectionFiles | ForEach-Object { "$PythonPluginPath/$_" })
+    $expected=@($projectionFiles | ForEach-Object { "$PythonPluginPath/$_" })
     if (@(Compare-Object $expected $actual -CaseSensitive).Count) { throw 'Merged wrapper payload inventory differs.' }
     foreach ($file in $Record.files) {
         $path="$PythonPluginPath/$($file.source)"

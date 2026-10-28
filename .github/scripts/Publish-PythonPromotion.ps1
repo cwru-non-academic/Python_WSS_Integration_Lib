@@ -24,8 +24,10 @@ if ($role -ceq 'wrapper') {
     if ($projection.projection_sha256 -cne $approval.projection_sha256) { throw 'Staged projection differs from preflight.' }
     $payloadRoot=Join-Path $RepositoryRoot $PythonPluginPath
     # Both validated roots are exact full inventories; replace only allowlisted files.
-    foreach ($source in $PythonProjectionFiles) {
-        Copy-Item -LiteralPath (Join-Path $WorkRoot "projection/$source") -Destination (Join-Path $payloadRoot $source)
+    foreach ($source in @(Get-PythonProjectionFiles $projection)) {
+        $target = Join-Path $payloadRoot $source
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $WorkRoot "projection/$source") -Destination $target
     }
     $projection | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $RepositoryRoot '.github/python-candidate.json')
     $allowed=Get-PythonAllowedWrapperPaths

@@ -5,18 +5,30 @@ param(
     [Parameter(Mandatory)][string]$OutputRoot,
     [string]$CliRoot='',
     [string]$CliSha='',
-    [string]$PythonExe='python'
+    [string]$PythonExe='python',
+    [ValidateSet('committed','candidate')][string]$Mode='committed',
+    [string]$ArtifactRoot='',
+    [string]$CandidatePath=''
 )
 . "$PSScriptRoot/PythonContract.ps1"
 $config = Read-PythonConfig (Join-Path $WrapperRoot '.github/python-ci.json')
 Assert-PythonSource $WrapperRoot $WrapperSha
 Assert-PythonSource $FixtureRoot $config.fixture_commit
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
-$projection = Get-Content (Join-Path $WrapperRoot '.github/python-candidate.json') -Raw | ConvertFrom-Json
-$payload = Join-Path $WrapperRoot $PythonPluginPath
-Assert-PythonProjection $payload $projection
 if (Test-Path -LiteralPath $OutputRoot) { throw 'Platform output must be new.' }
 New-Item -ItemType Directory -Path $OutputRoot | Out-Null
+if ($Mode -ceq 'candidate') {
+    if (!$ArtifactRoot -or !$CandidatePath) { throw 'Candidate platform checks require the exact resolved artifact; no fallback.' }
+    $candidate = Get-Content -LiteralPath $CandidatePath -Raw | ConvertFrom-Json
+    $payload = Join-Path $OutputRoot 'projection'
+    $projection = New-PythonProjection $ArtifactRoot $WrapperRoot $payload $candidate
+} else {
+    if ($ArtifactRoot -or $CandidatePath) { throw 'Committed platform checks cannot accept candidate overrides.' }
+    $projection = Get-Content (Join-Path $WrapperRoot '.github/python-candidate.json') -Raw | ConvertFrom-Json
+    $payload = Join-Path $WrapperRoot $PythonPluginPath
+    Assert-PythonProjection $payload $projection
+}
+$contract = Get-WssUniversalContract @(Get-PythonProjectionFiles $projection)
 $installed = Join-Path $OutputRoot 'installed'
 $wheels = Join-Path $OutputRoot 'wheels'
 # Build disposable copies so packaging never mutates the immutable source checkouts.
@@ -40,7 +52,8 @@ Assert-PythonProjection $stagedPayload $projection
 $env:PYTHONNET_RUNTIME = 'coreclr'
 $env:PYTHONPATH = $installed
 $env:PYTHONDONTWRITEBYTECODE = '1'
-$options = @('--payload',$stagedPayload,'--installed',$installed)
+$smokeResult = Join-Path $OutputRoot 'python-smoke.json'
+$options = @('--payload',$stagedPayload,'--installed',$installed,'--contract',$contract,'--output',$smokeResult)
 if ($CliRoot) { $options += '--cli' }
 Push-Location $OutputRoot
 try {
@@ -60,9 +73,24 @@ try {
 } finally { Pop-Location }
 & (Join-Path $FixtureRoot '.github/scripts/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot (Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0')
 if (!$?) { throw 'Platform build payload propagation failed.' }
+$builtPayload = Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+foreach ($relative in @(Get-PythonProjectionFiles $projection)) {
+    if ($relative -ceq 'System.IO.Ports.dll') { continue } # Verified NuGet runtime selection above.
+    if ((Get-FileHash (Join-Path $stagedPayload $relative)).Hash -cne (Get-FileHash (Join-Path $builtPayload $relative)).Hash) {
+        throw "Shared platform build dropped or changed a declared asset: $relative"
+    }
+}
+$smoke = Get-Content $smokeResult -Raw | ConvertFrom-Json
+if ($IsMacOS -and $contract -ceq 'macos-ble-v1') {
+    if (!$smoke.macos_ble_declared -or !$smoke.ble.StartsWith('passed:',[StringComparison]::Ordinal)) { throw 'Declared macOS BLE activation must pass.' }
+    [xml]$trx = Get-Content (Join-Path $OutputRoot 'platform.trx') -Raw
+    if (@($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName -ceq 'FacadeLoadsCurrentPlatformBackendAndDependencies' -and $_.outcome -ceq 'Passed' }).Count -ne 1) {
+        throw 'The pinned shared C# fixture must execute macOS BLE; a skipped legacy fixture is not acceptance.'
+    }
+}
 Assert-PythonProjection $stagedPayload $projection
 Assert-PythonProjection $payload $projection
 Assert-PythonSource $WrapperRoot $WrapperSha
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
-if ($IsMacOS) { Write-Output 'SKIP: macOS BLE backend is not implemented; shared NUnit result records the skip.' }
-@{schema='wss-python-platform/v1'; wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$config.fixture_commit; os=[Runtime.InteropServices.RuntimeInformation]::OSDescription; projection_sha256=$projection.projection_sha256; installed_python_smoke='passed'; ble= $(if ($IsMacOS) {'skipped: backend not implemented'} else {'loading passed; no physical device tested'})} | ConvertTo-Json | Set-Content (Join-Path $OutputRoot 'platform.json')
+if ($IsMacOS -and $contract -ceq 'legacy-v1') { Write-Output 'UNSUPPORTED: exact legacy payload does not declare macOS BLE; no BLE support is claimed.' }
+@{schema='wss-python-platform/v1'; mode=$Mode; wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$config.fixture_commit; os=[Runtime.InteropServices.RuntimeInformation]::OSDescription; projection_sha256=$projection.projection_sha256; universal_contract=$contract; installed_python_smoke='passed'; ble=$smoke.ble; python_smoke_sha256=(Get-FileHash $smokeResult).Hash.ToLowerInvariant()} | ConvertTo-Json | Set-Content (Join-Path $OutputRoot 'platform.json')

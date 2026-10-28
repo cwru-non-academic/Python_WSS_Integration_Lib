@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-. "$PSScriptRoot/Universal-WssFiles.ps1"
+. "$PSScriptRoot/PythonContract.ps1"
 
 function Invoke-Gh([string[]] $Arguments) {
     $result = & gh @Arguments
@@ -86,11 +86,13 @@ $archive = Join-Path $downloadDir $ArchiveName
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $ExpectedSha256) { throw 'Universal archive SHA-256 mismatch.' }
 
 # Validate ZIP paths and inventory before extraction, including case-colliding entries.
+$contract = Get-PythonProducerContract $ExpectedCommit.ToLowerInvariant()
+$contractFiles = @(Get-WssUniversalFiles $contract)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::OpenRead($archive)
 try {
     $entries = @($zip.Entries | ForEach-Object { $_.FullName })
-    $expectedEntries = @($WssUniversalFiles | ForEach-Object { "WSS-Universal/$_" })
+    $expectedEntries = @($contractFiles | ForEach-Object { "WSS-Universal/$_" })
     if ($entries.Count -ne $expectedEntries.Count -or
         @($entries | Sort-Object -Unique).Count -ne $entries.Count -or
         @(Compare-Object $expectedEntries $entries -CaseSensitive).Count -ne 0) {
