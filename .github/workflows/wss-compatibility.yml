@@ -1,16 +1,200 @@
 name: WSS integration compatibility
 on:
   push:
-    branches: [dev]
+    branches: [dev, main]
   pull_request:
     branches: [dev, main]
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: python-wrapper-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
+  prerequisites:
+    name: Resolve committed sources
+    runs-on: windows-2022
+    outputs:
+      wrapper: ${{ steps.sources.outputs.wrapper }}
+      cli: ${{ steps.sources.outputs.cli }}
+      fixture: ${{ steps.sources.outputs.fixture }}
+      sdk: ${{ steps.sources.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate exact source and execution contract
+        id: sources
+        shell: pwsh
+        env:
+          ROLE: wrapper
+          MODE: committed
+          WRAPPER_SHA: ${{ github.sha }}
+          CLI_SHA: ''
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-Content .github/python-ci.json -Raw | ConvertFrom-Json
+          if ($config.automated_execution -cne 'pythonnet' -or $config.dotnet_sdk -cne '9.0.316') { throw 'Unexpected automated execution contract.' }
+          if ($env:ROLE -cnotin @('wrapper','cli') -or $env:MODE -cnotin @('candidate','committed')) { throw 'Invalid validation role/mode.' }
+          $wrapper = $env:WRAPPER_SHA
+          $cli = $env:CLI_SHA
+          if ($env:ROLE -ceq 'cli') {
+            $entry = git ls-tree HEAD -- external/wss-py-wrapper
+            if ($LASTEXITCODE -ne 0 -or $entry -cnotmatch '^160000 commit ([0-9a-f]{40})\s+external/wss-py-wrapper$') { throw 'Exact wrapper gitlink is required.' }
+            $wrapper = $Matches[1]
+          }
+          $ownSha = if ($env:ROLE -ceq 'wrapper') { $wrapper } else { $cli }
+          if ($ownSha -cne $env:GITHUB_SHA -or $wrapper -cnotmatch '^[0-9a-f]{40}$' -or ($cli -and $cli -cnotmatch '^[0-9a-f]{40}$') -or $config.fixture_commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid or raced immutable source.' }
+          "wrapper=$wrapper" >> $env:GITHUB_OUTPUT
+          "cli=$cli" >> $env:GITHUB_OUTPUT
+          "fixture=$($config.fixture_commit)" >> $env:GITHUB_OUTPUT
+          "sdk=$($config.dotnet_sdk)" >> $env:GITHUB_OUTPUT
+  conformance:
+    needs: prerequisites
+    name: Integration behavioral tests
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ needs.prerequisites.outputs.sdk }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned pythonnet host
+        run: python -m pip install pythonnet==3.0.5
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ needs.prerequisites.outputs.wrapper }}
+          path: wrapper
+          token: ${{ github.token }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: needs.prerequisites.outputs.cli != ''
+        with:
+          repository: cwru-non-academic/CLI_Python_WSS_Application
+          ref: ${{ needs.prerequisites.outputs.cli }}
+          path: cli
+          token: ${{ github.token }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/CSharp_WSS_Integration_Lib
+          ref: ${{ needs.prerequisites.outputs.fixture }}
+          path: fixture
+          token: ${{ github.token }}
+          persist-credentials: false
+      - name: Execute canonical cases through shared production wrapper source
+        shell: pwsh
+        env:
+          MODE: committed
+          ROLE: wrapper
+          WRAPPER_SHA: ${{ needs.prerequisites.outputs.wrapper }}
+          CLI_SHA: ${{ needs.prerequisites.outputs.cli }}
+        run: |
+          $options = @{
+            WrapperRoot = "$env:GITHUB_WORKSPACE/wrapper"
+            FixtureRoot = "$env:GITHUB_WORKSPACE/fixture"
+            WrapperSha = $env:WRAPPER_SHA
+            ConfigPath = "$env:GITHUB_WORKSPACE/wrapper/.github/python-ci.json"
+            OutputRoot = "$env:RUNNER_TEMP/conformance-results"
+            Mode = $env:MODE
+            Role = $env:ROLE
+          }
+          if ($env:CLI_SHA) { $options.CliRoot = "$env:GITHUB_WORKSPACE/cli"; $options.CliSha = $env:CLI_SHA }
+          if ($env:MODE -ceq 'candidate') {
+            $options.ArtifactRoot = "$env:RUNNER_TEMP/resolved/extracted/WSS-Universal"
+            $options.CandidatePath = "$env:RUNNER_TEMP/resolved/candidate.json"
+          }
+          ./wrapper/.github/scripts/Invoke-DotNetConformance.ps1 @options
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: dotnet-conformance-evidence
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/conformance-results/evidence.json
+            ${{ runner.temp }}/conformance-results/results.xml
+            ${{ runner.temp }}/conformance-results/dotnet.log
+            ${{ runner.temp }}/conformance-results/projection.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dotnet-diagnostics
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/conformance-results/*.log
+            ${{ runner.temp }}/conformance-results/*.xml
+            ${{ runner.temp }}/conformance-results/harness/conformance-inputs.json
+
+  platform-compatibility:
+    name: Integration compatibility (${{ matrix.name }})
+    needs: prerequisites
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-2022
+          - name: Ubuntu
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ needs.prerequisites.outputs.sdk }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python build and runtime prerequisites
+        run: python -m pip install build==1.2.2.post1 pythonnet==3.0.5
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ needs.prerequisites.outputs.wrapper }}
+          path: wrapper
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: needs.prerequisites.outputs.cli != ''
+        with:
+          repository: cwru-non-academic/CLI_Python_WSS_Application
+          ref: ${{ needs.prerequisites.outputs.cli }}
+          path: cli
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/CSharp_WSS_Integration_Lib
+          ref: ${{ needs.prerequisites.outputs.fixture }}
+          path: fixture
+          persist-credentials: false
+
+      - name: Build and install wheels, check Python runtime and shared platform loading
+        shell: pwsh
+        env:
+          WRAPPER_SHA: ${{ needs.prerequisites.outputs.wrapper }}
+          CLI_SHA: ${{ needs.prerequisites.outputs.cli }}
+        run: |
+          $options = @{
+            WrapperRoot = "$env:GITHUB_WORKSPACE/wrapper"
+            WrapperSha = $env:WRAPPER_SHA
+            FixtureRoot = "$env:GITHUB_WORKSPACE/fixture"
+            OutputRoot = "$env:RUNNER_TEMP/platform-results"
+          }
+          if ($env:CLI_SHA) { $options.CliRoot = "$env:GITHUB_WORKSPACE/cli"; $options.CliSha = $env:CLI_SHA }
+          ./wrapper/.github/scripts/Invoke-PlatformCompatibility.ps1 @options
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-platform-${{ matrix.name }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/platform-results/platform.json
+            ${{ runner.temp }}/platform-results/platform.trx
+            ${{ runner.temp }}/platform-results/wheels/*.whl
   contracts:
     name: Promotion safety contracts
     runs-on: windows-2022
@@ -21,24 +205,3 @@ jobs:
       - name: Verify versioned fan-out and rejection contracts
         shell: pwsh
         run: ./.github/scripts/tests/Test-PythonFanout.ps1
-  validate:
-    uses: ./.github/workflows/_python-validation.yml
-    with:
-      role: wrapper
-      mode: committed
-      wrapper_sha: ${{ github.sha }}
-    secrets:
-      WSS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
-  acceptance:
-    name: Integration behavioral tests
-    if: always()
-    needs: [validate, contracts]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require actual committed-state conformance
-        env:
-          VALIDATION_RESULT: ${{ needs.validate.result }}
-          CONTRACT_RESULT: ${{ needs.contracts.result }}
-        run: |
-          test "$VALIDATION_RESULT" = success
-          test "$CONTRACT_RESULT" = success

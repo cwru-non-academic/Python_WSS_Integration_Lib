@@ -127,3 +127,30 @@ protocol/state behavior. CLI evidence covers production controller construction,
 not terminal command parsing, interactive input/output, or every CLI command.
 The suite does not prove physical Serial/BLE behavior, native backend activation,
 GUI behavior, hardware safety, or compatibility across all Python/.NET versions.
+
+## Separate behavior and platform checks
+
+Ordinary CI runs the unchanged ten-case/eighteen-assertion canonical corpus in
+`Integration behavioral tests` or `CLI general conformance` directly, with no
+aggregate acceptance alias. The embedding host remains Windows CPython 3.12;
+this behavioral result makes no claim about other operating systems.
+
+Independent jobs named `Integration compatibility (Windows)`, `(Ubuntu)`,
+`(macOS)` and `CLI platform compatibility (Windows)`, `(Ubuntu)`, `(macOS)` run
+on their respective OS runners. Each builds and installs wheels in an isolated
+consumer directory, verifies the complete payload inventory and hashes, checks
+actual production Python Ports runtime selection/construction, and runs the
+pinned C# SerialRuntimeSelectionTests/BleBackendLoadingTests against that same
+payload. CLI jobs also run installed module help/argument parsing away from the
+source checkout. These are platform/package checks, not repetitions of the
+emulator scenarios. Python wheels contain source; the verified universal runtime
+payload is staged beside the installed package, matching the documented layout.
+
+macOS uses an x64 runner to match the committed universal distribution. Its BLE
+backend loading test explicitly skips because the backend is unimplemented;
+this is recorded in TRX and platform.json and does not indicate BLE support.
+No check opens a physical serial port or connects to a BLE device. The existing
+candidate preflights, versioned producer provenance, CLI/ROS fan-out and App
+permissions are unchanged. PRs to both main and dev, and pushes to both branches,
+run ordinary CI. CLI platform tools are pinned to an immutable reviewed source;
+the application still consumes its own committed wrapper gitlink.
