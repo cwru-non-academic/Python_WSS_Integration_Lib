@@ -30,7 +30,7 @@ if ($role -ceq 'wrapper') {
         Copy-Item -LiteralPath (Join-Path $WorkRoot "projection/$source") -Destination $target
     }
     $projection | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $RepositoryRoot '.github/python-candidate.json')
-    $allowed=Get-PythonAllowedWrapperPaths
+    $allowed=Get-PythonAllowedWrapperPaths $projection
     $null=Invoke-PythonGit $RepositoryRoot (@('add','--')+$allowed)
     Assert-PythonProjection (Join-Path $RepositoryRoot $PythonPluginPath) $projection
 } else {

@@ -64,17 +64,29 @@ def verify_macos_activation(payload: Path) -> None:
         raise RuntimeError("macOS BLE native context creation failed")
     library.wss_mac_destroy(context)  # Never submit initialize, discovery, connect or write.
     from Wss.Transports.Backends.MacOS import MacBleBackend
+
+    MacBleBackend.VerifyNativeAbi()  # Prove CLR P/Invoke finds the same packaged bridge.
+
+
+def verify_macos_managed(payload: Path) -> None:
+    """Validate the declared managed identity/TFM on every host without a radio."""
+    from wss_py_wrapper.wss_loader import WssLoader
+    expected = (payload / "backends/macos/WSS.Transport.BLE.MacOS.dll").resolve()
+    WssLoader([expected]).load()
+    from Wss.Transports.Backends.MacOS import MacBleBackend
     import clr
+    from System import Object
+    from System.Runtime.Loader import AssemblyLoadContext
 
     assembly = clr.GetClrType(MacBleBackend).Assembly
-    expected = (payload / "backends/macos/WSS.Transport.BLE.MacOS.dll").resolve()
-    if Path(assembly.Location).resolve() != expected or str(assembly.GetName().Version) != "1.0.0.0":
+    if (Path(assembly.Location).resolve() != expected or assembly.GetName().Name != "WSS.Transport.BLE.MacOS"
+            or str(assembly.GetName().Version) != "1.0.0.0"
+            or not Object.ReferenceEquals(AssemblyLoadContext.GetLoadContext(assembly), AssemblyLoadContext.Default)):
         raise RuntimeError("Wrong packaged macOS managed backend")
     framework = [a for a in assembly.GetCustomAttributesData()
                  if a.AttributeType.FullName == "System.Runtime.Versioning.TargetFrameworkAttribute"]
     if len(framework) != 1 or str(framework[0].ConstructorArguments[0].Value) != ".NETStandard,Version=v2.0":
         raise RuntimeError("Wrong macOS backend target framework")
-    MacBleBackend.VerifyNativeAbi()  # Prove CLR P/Invoke finds the same packaged bridge.
 
 
 def main() -> None:
@@ -92,6 +104,8 @@ def main() -> None:
     if not Path(wss_py_wrapper.__file__).resolve().is_relative_to(args.installed.resolve()):
         raise RuntimeError("Smoke check imported source instead of the installed wheel")
     WssLoader(collect_dlls(args.payload)).load()
+    if macos_declared:
+        verify_macos_managed(args.payload)
     from System.IO.Ports import SerialPort
     from Wss.Transports import SerialPortTransport, SerialPortTransportOptions
 

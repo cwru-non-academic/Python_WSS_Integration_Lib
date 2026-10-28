@@ -195,6 +195,7 @@ jobs:
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/platform-results/platform.json
+            ${{ runner.temp }}/platform-results/python-smoke.json
             ${{ runner.temp }}/platform-results/platform.trx
             ${{ runner.temp }}/platform-results/wheels/*.whl
   contracts:

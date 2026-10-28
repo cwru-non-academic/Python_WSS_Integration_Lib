@@ -90,3 +90,12 @@ python -m build
 ## Conformance and automatic dependency promotion
 
 See [.github/PYTHON_AUTOMATION.md](.github/PYTHON_AUTOMATION.md) for canonical tests, CI checks, artifact provenance, dev promotion and human merge gates.
+# Explicit BLE transport
+
+Serial remains the default. To select a packaged BLE backend, construct
+`WssConfig(..., transport="ble", ble_device_name="WSS")`, use
+`ble_device_id="..."`, or explicitly set `ble_auto=True`. Then use the existing
+controller initialization/lifecycle. Do not combine BLE selection with Serial,
+Test or Conformance options. The exact legacy distribution does not provide a
+macOS BLE backend; the new declared distribution requires both its managed backend
+and universal native bridge. See [.github/MACOS_BLE_RECEIVER.md](.github/MACOS_BLE_RECEIVER.md).

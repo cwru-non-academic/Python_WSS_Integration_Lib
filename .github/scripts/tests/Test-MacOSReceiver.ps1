@@ -6,11 +6,18 @@ function Reject([scriptblock]$Action,[string]$Description) { $failed=$false; try
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $record=Get-Content (Join-Path $root '.github/python-candidate.json') -Raw | ConvertFrom-Json
 Assert-PythonProjection (Join-Path $root 'Cs_Libraries') $record
-Require ((Get-WssUniversalContract @(Get-PythonProjectionFiles $record)) -ceq 'legacy-v1') 'Committed transition baseline must remain the exact legacy payload.'
+Require ((Get-WssUniversalContract @(Get-PythonProjectionFiles $record)) -cin @('legacy-v1','macos-ble-v1')) 'Committed payload must match one exact supported contract.'
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('wss-macos-receiver-contract-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary | Out-Null
 $inputRoot=Join-Path $temporary 'input'
-Copy-Item -LiteralPath (Join-Path $root 'Cs_Libraries') -Destination $inputRoot -Recurse
+New-Item -ItemType Directory -Path $inputRoot | Out-Null
+foreach ($relative in $WssUniversalFiles) {
+    $target=Join-Path $inputRoot $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root "Cs_Libraries/$relative") -Destination $target
+}
+$legacyRoot=Join-Path $temporary 'legacy'
+$legacyRecord=New-PythonProjection $inputRoot $root $legacyRoot $record.candidate
 $mac=Join-Path $inputRoot 'backends/macos'
 New-Item -ItemType Directory -Path $mac | Out-Null
 # Deliberate non-library fixtures test inventory rules only; never loading proof.
@@ -25,9 +32,9 @@ Require ((Get-FileHash (Join-Path $projected 'backends/macos/libwss_macos_ble.dy
 $bad=$new | ConvertTo-Json -Depth 8 | ConvertFrom-Json
 $bad.universal_contract='legacy-v1'
 Reject { Get-PythonProjectionFiles $bad } 'A new inventory cannot masquerade as legacy.'
-$bad=$record | ConvertTo-Json -Depth 8 | ConvertFrom-Json
-$bad | Add-Member -NotePropertyName universal_contract -NotePropertyValue 'macos-ble-v1'
-Reject { Assert-PythonProjection (Join-Path $root 'Cs_Libraries') $bad } 'A declared macOS payload cannot omit either backend asset.'
+$bad=$legacyRecord | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$bad.universal_contract='macos-ble-v1'
+Reject { Assert-PythonProjection $legacyRoot $bad } 'A declared macOS payload cannot omit either backend asset.'
 Remove-Item -LiteralPath (Join-Path $projected 'backends/macos/libwss_macos_ble.dylib')
 Reject { Assert-PythonProjection $projected $new } 'Missing declared dylib must fail.'
 Set-Content (Join-Path $mac 'extra.dll') 'not allowlisted'
@@ -46,6 +53,22 @@ $badJobs=$allJobs | ConvertTo-Json | ConvertFrom-Json
 ($badJobs | Where-Object name -CEQ 'BLE consumer (macOS arm64)').conclusion='skipped'
 Reject { Assert-PythonProducerJobs $badJobs 'macos-ble-v1' } 'Skipped macOS architecture proof must fail.'
 Reject { Assert-PythonProducerJobs ($allJobs+@($allJobs[-1])) 'macos-ble-v1' } 'Duplicate producer proof must fail.'
+Require (@(Get-PythonEvidenceJobs wrapper 'macos-ble-v1').Count -eq 4) 'New wrapper proof must include all three actual platform jobs.'
+Require (@(Get-PythonEvidenceJobs cli 'macos-ble-v1').Count -eq 4) 'New CLI proof must include all three actual platform jobs.'
+$canonical=[pscustomobject]@{wrapper_sha=('c'*40);projection_sha256=('d'*64)}
+$proof=[pscustomobject]@{schema='wss-python-platform/v1';mode='candidate';candidate=$record.candidate;wrapper_sha=$canonical.wrapper_sha;cli_sha=('e'*40);fixture_sha=('f'*40);projection_sha256=$canonical.projection_sha256;universal_contract='macos-ble-v1';run_repository=$PythonCliRepository;run_id='123';run_sha=('e'*40);ble='passed: contract-only fixture';os='macOS fixture'}
+$smoke=[pscustomobject]@{contract='macos-ble-v1';macos_ble_declared=$true;physical_io=$false;cli_routing=$true;ble='passed: contract-only fixture'}
+Assert-PythonPlatformEvidence $proof $smoke $canonical $record.candidate $PythonCliRepository '123' ('e'*40) cli ('f'*40) macOS; $checks++
+foreach ($field in @('wrapper_sha','cli_sha','projection_sha256','run_sha','universal_contract','ble','os')) {
+    $badProof=$proof | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $badProof.$field='incorrect'
+    Reject { Assert-PythonPlatformEvidence $badProof $smoke $canonical $record.candidate $PythonCliRepository '123' ('e'*40) cli ('f'*40) macOS } "Mismatched platform proof must fail: $field"
+}
+foreach ($field in @('macos_ble_declared','physical_io','cli_routing')) {
+    $badSmoke=$smoke | ConvertTo-Json | ConvertFrom-Json
+    $badSmoke.$field = !$badSmoke.$field
+    Reject { Assert-PythonPlatformEvidence $proof $badSmoke $canonical $record.candidate $PythonCliRepository '123' ('e'*40) cli ('f'*40) macOS } "Missing or unsafe native smoke proof must fail: $field"
+}
 # An otherwise green PR run is still not a canonical dev-push producer.
 function Invoke-PythonGh([string[]]$Arguments) {
     if ($Arguments[-1] -notlike '*actions/runs/*') { throw 'A PR source must be rejected before any further lookup.' }

@@ -122,8 +122,9 @@ function Assert-PythonSource([string]$Root,[string]$Sha,[switch]$IgnoreSubmodule
     if ($IgnoreSubmodule) { $statusArguments+='--ignore-submodules=all' }
     if (@(Invoke-PythonGit $Root $statusArguments).Count -ne 0) { throw 'Source checkout must be clean before staging the disposable harness.' }
 }
-function Get-PythonAllowedWrapperPaths {
-    @($WssMacOSUniversalFiles | ForEach-Object { "$PythonPluginPath/$_" }) + @('.github/python-candidate.json')
+function Get-PythonAllowedWrapperPaths($Record=$null) {
+    $files = if ($null -ne $Record) { @(Get-PythonProjectionFiles $Record) } else { @($WssMacOSUniversalFiles) }
+    @($files | ForEach-Object { "$PythonPluginPath/$_" }) + @('.github/python-candidate.json')
 }
 function Assert-PythonDiff([string[]]$Paths,[string[]]$Allowed) {
     if ($Paths.Count -eq 0 -or @($Paths | Where-Object { $_ -cnotin $Allowed }).Count -gt 0) { throw 'Empty or out-of-scope promotion diff.' }
