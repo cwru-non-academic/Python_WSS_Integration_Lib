@@ -134,6 +134,7 @@ def main() -> None:
             raise RuntimeError(f"Installed CLI help was incomplete: {result.stdout}")
         print("PASS: installed CLI argument parsing and help")
     ble_status = "unsupported: legacy payload does not declare macOS BLE"
+    ble_routing = False
     if sys.platform != "darwin" or macos_declared:
         if args.cli:
             command = wss_cli.main
@@ -164,10 +165,11 @@ def main() -> None:
             if sys.platform == "darwin":
                 verify_macos_activation(args.payload)
             ble_status = "passed: packaged facade/backend loaded; no radio commands"
+            ble_routing = args.cli
         finally:
             transport.Dispose()
     args.output.write_text(json.dumps({"contract": args.contract, "macos_ble_declared": macos_declared,
-                                      "ble": ble_status, "cli_routing": args.cli,
+                                      "ble": ble_status, "cli_routing": ble_routing,
                                       "physical_io": False}, indent=2))
     print(f"BLE: {ble_status}")
     print(f"PASS: installed Python loader selected {loaded}; Serial construction without opening hardware")
