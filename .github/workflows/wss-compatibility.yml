@@ -210,3 +210,7 @@ jobs:
         run: |
           ./.github/scripts/tests/Test-PythonFanout.ps1
           ./.github/scripts/tests/Test-MacOSReceiver.ps1
+          ./.github/scripts/tests/Test-CandidateProvenance.ps1
+          ./.github/scripts/tests/Test-ReleaseReceiptContract.ps1
+          node --test .github/scripts/tests/ReceiptGuards.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Receipt guard unit tests failed.' }

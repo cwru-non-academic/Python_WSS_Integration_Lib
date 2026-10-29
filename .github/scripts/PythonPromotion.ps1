@@ -313,6 +313,31 @@ function Assert-PythonRemoteProjection([string]$Sha,$Record) {
     }
 }
 
+function Get-PythonFinalHeadWrapperRuns($Pages,$Pr,$CommitPullRequests) {
+    # GitHub can omit run.pull_requests after merge. Bind that case through the
+    # exact head commit's PR association, never through branch name alone.
+    $associated=@($CommitPullRequests | Where-Object {
+        $_.number -eq $Pr.number -and $_.head.sha -ceq $Pr.head.sha -and
+        $_.head.ref -ceq $Pr.head.ref -and $_.base.ref -ceq 'dev' -and
+        $_.head.repo.full_name -ceq $PythonWrapperRepository -and
+        $_.base.repo.full_name -ceq $PythonWrapperRepository
+    })
+    foreach ($run in @($Pages | ForEach-Object { $_.workflow_runs })) {
+        if ($run.event -cne 'pull_request' -or $run.head_sha -cne $Pr.head.sha -or
+            $run.head_branch -cne $Pr.head.ref -or
+            $run.repository.full_name -cne $PythonWrapperRepository -or
+            $run.head_repository.full_name -cne $PythonWrapperRepository -or
+            $run.path -cne '.github/workflows/wss-compatibility.yml') { continue }
+        $created=[DateTimeOffset]$run.created_at
+        if ($created -lt [DateTimeOffset]$Pr.created_at -or
+            $created -gt [DateTimeOffset]$Pr.merged_at) { continue }
+        $linked=@($run.pull_requests | ForEach-Object { $_ })
+        if ($linked.Count -gt 0) {
+            if (@($linked | Where-Object { $_.number -eq $Pr.number }).Count -ne 1) { continue }
+        } elseif ($associated.Count -ne 1) { continue }
+        $run
+    }
+}
 function Assert-PythonMergedWrapper([string]$Sha,[string]$PrNumber,$Approval) {
     Assert-PythonSha $Sha
     if ($PrNumber -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid wrapper PR number.' }
@@ -326,7 +351,9 @@ function Assert-PythonMergedWrapper([string]$Sha,[string]$PrNumber,$Approval) {
     if ($delta.total_commits -lt 1 -or $delta.files.Count -ge 300) { throw 'Wrapper comparison empty or potentially truncated.' }
     Assert-PythonDiff @($delta.files.filename) (Get-PythonAllowedWrapperPaths)
     $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/actions/workflows/wss-compatibility.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=100") | ConvertFrom-Json
-    $runs=@($pages | ForEach-Object { $_.workflow_runs } | Where-Object { @($_.pull_requests.number) -contains [int]$PrNumber } | Sort-Object { [long]$_.id } -Descending)
+    $commitPages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/commits/$($pr.head.sha)/pulls?per_page=100") | ConvertFrom-Json
+    $commitPrs=@($commitPages | ForEach-Object { $_ })
+    $runs=@(Get-PythonFinalHeadWrapperRuns $pages $pr $commitPrs | Sort-Object { [long]$_.id } -Descending)
     if ($runs.Count -eq 0 -or $runs[0].status -cne 'completed' -or $runs[0].conclusion -cne 'success') { throw 'Latest final-head normal wrapper PR CI has not succeeded.' }
     $jobs=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/actions/runs/$($runs[0].id)/jobs?per_page=100") | ConvertFrom-Json
     $required=@($jobs | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq 'Integration behavioral tests' })
