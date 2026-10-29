@@ -12,3 +12,16 @@ $WssUniversalFiles = @(
     'runtimes/win/lib/net8.0/System.IO.Ports.dll', 'runtimes/unix/lib/net8.0/System.IO.Ports.dll',
     'runtimes/linux-x64/native/libSystem.IO.Ports.Native.so'
 )
+$WssMacOSUniversalFiles = @($WssUniversalFiles) + @(
+    'backends/macos/WSS.Transport.BLE.MacOS.dll',
+    'backends/macos/libwss_macos_ble.dylib'
+)
+function Get-WssUniversalContract([string[]]$Files) {
+    if ($Files.Count -eq $WssUniversalFiles.Count -and @(Compare-Object $WssUniversalFiles $Files -CaseSensitive).Count -eq 0) { return 'legacy-v1' }
+    if ($Files.Count -eq $WssMacOSUniversalFiles.Count -and @(Compare-Object $WssMacOSUniversalFiles $Files -CaseSensitive).Count -eq 0) { return 'macos-ble-v1' }
+    throw 'Only the exact legacy or macOS BLE universal inventory is accepted.'
+}
+function Get-WssUniversalFiles([ValidateSet('legacy-v1','macos-ble-v1')][string]$Contract) {
+    if ($Contract -cnotin @('legacy-v1','macos-ble-v1')) { throw 'Universal contract names are case-sensitive.' }
+    if ($Contract -ceq 'macos-ble-v1') { $WssMacOSUniversalFiles } else { $WssUniversalFiles }
+}

@@ -82,6 +82,8 @@ jobs:
           path: fixture
           token: ${{ github.token }}
           persist-credentials: false
+      - name: Verify receiver declaration and explicit transport contracts
+        run: python -m unittest discover -s wrapper/tests -v
       - name: Execute canonical cases through shared production wrapper source
         shell: pwsh
         env:
@@ -193,6 +195,7 @@ jobs:
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/platform-results/platform.json
+            ${{ runner.temp }}/platform-results/python-smoke.json
             ${{ runner.temp }}/platform-results/platform.trx
             ${{ runner.temp }}/platform-results/wheels/*.whl
   contracts:
@@ -204,4 +207,6 @@ jobs:
           persist-credentials: false
       - name: Verify versioned fan-out and rejection contracts
         shell: pwsh
-        run: ./.github/scripts/tests/Test-PythonFanout.ps1
+        run: |
+          ./.github/scripts/tests/Test-PythonFanout.ps1
+          ./.github/scripts/tests/Test-MacOSReceiver.ps1
