@@ -3,7 +3,7 @@
   "branch": "dev",
   "baseline_ready": true,
   "fixture_repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
-  "fixture_commit": "7145e2307f997f703748530bf74311ef94455e98",
+  "fixture_commit": "02172a64c55becd5535204f46f10b4755bf3ee05",
   "fixture_sha256": "1cdfb9448a1776011eadc9aef8356362216032013a4f268f50242746c50a0b44",
   "automated_execution": "pythonnet",
   "dotnet_sdk": "9.0.316",
