@@ -33,3 +33,24 @@ jobs:
         env:
           VALIDATION_RESULT: ${{ needs.validate.result }}
         run: test "$VALIDATION_RESULT" = success
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-preflight-evidence
+          path: ${{ runner.temp }}/normalized-evidence
+      - name: Add normalized candidate binding after all existing proofs passed
+        shell: pwsh
+        env:
+          CANDIDATE_JSON: ${{ inputs.candidate_json }}
+        run: |
+          ./source/.github/scripts/Write-CandidateProvenance.ps1 -CandidateJson $env:CANDIDATE_JSON -EvidenceRoot "$env:RUNNER_TEMP/normalized-evidence" -OutputPath "$env:RUNNER_TEMP/candidate-provenance/candidate.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wss-candidate-provenance
+          retention-days: 90
+          if-no-files-found: error
+          path: ${{ runner.temp }}/candidate-provenance/candidate.json
