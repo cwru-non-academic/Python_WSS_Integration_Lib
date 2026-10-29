@@ -1,0 +1,64 @@
+name: Verify dev release acceptance
+run-name: WSS acceptance python-wrapper ${{ inputs.plan_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id: {required: true, type: string}
+      plan_id: {required: true, type: string}
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: acceptance-python-wrapper-${{ inputs.plan_id }}
+  cancel-in-progress: false
+jobs:
+  receipt:
+    name: Verify exact reviewed dev acceptance
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Require dev reconciliation before credentials
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -cne 'refs/heads/dev' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') { throw 'Only read-only dev reconciliation is supported.' }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: de631fe4f1b80b5b4e2c6691f444625ef1730499
+          path: contract
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/create-github-app-token@v2
+        id: read
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore,Python_WSS_Integration_Lib,CLI_Python_WSS_Application,ROS_Python_WSS_Application
+          permission-contents: read
+          permission-actions: read
+          permission-pull-requests: read
+      - name: Verify frozen plan, original rich proofs, actual merge and postmerge CI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+          TARGET_ID: python-wrapper
+          PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+          PLAN_ID: ${{ inputs.plan_id }}
+        run: |
+          node ./source/.github/scripts/Write-ReleaseReceipt.mjs "$env:GITHUB_WORKSPACE/source" "$env:GITHUB_WORKSPACE/source" "$env:GITHUB_WORKSPACE/contract" "$env:RUNNER_TEMP/release-receipt"
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only acceptance verification failed.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wss-acceptance-python-wrapper-${{ inputs.plan_id }}-a${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: ${{ runner.temp }}/release-receipt/receipt.json

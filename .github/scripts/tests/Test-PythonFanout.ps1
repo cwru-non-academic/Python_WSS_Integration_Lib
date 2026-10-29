@@ -81,6 +81,49 @@ Assert-Rejected { Assert-PythonProjection (Join-Path $repositoryRoot 'Cs_Librari
 $badCandidate=$candidate.Clone();$badCandidate.artifact_id='999'
 Assert-Rejected { Assert-PythonSameCandidate $badCandidate $candidate } 'Exact producer artifact ID must remain bound.'
 
+# Regression: successful final-head runs can have an empty PR array after merge.
+# These are metadata unit fixtures, not conformance or promotion proof.
+$prFixture=[pscustomobject]@{number=10;created_at='2026-10-29T00:00:00Z';merged_at='2026-10-29T00:10:00Z';
+    head=@{sha=('c'*40);ref='automation/exact';repo=@{full_name=$PythonWrapperRepository}};
+    base=@{ref='dev';repo=@{full_name=$PythonWrapperRepository}}}
+$runFixture=[pscustomobject]@{id=100;event='pull_request';head_sha=('c'*40);head_branch='automation/exact';
+    repository=@{full_name=$PythonWrapperRepository};head_repository=@{full_name=$PythonWrapperRepository};
+    path='.github/workflows/wss-compatibility.yml';created_at='2026-10-29T00:01:00Z';pull_requests=@();
+    status='completed';conclusion='success'}
+Assert-Test (@(Get-PythonFinalHeadWrapperRuns @(@{workflow_runs=@($runFixture)}) $prFixture @($prFixture)).Count -eq 1) 'Empty run PR metadata must retain authoritative exact-commit PR linkage.'
+Assert-Test (@(Get-PythonFinalHeadWrapperRuns @(@{workflow_runs=@($runFixture)}) $prFixture @()).Count -eq 0) 'Empty run metadata without exact commit PR linkage must fail closed.'
+foreach ($field in @('number','head','base','repository')) {
+    $wrongPr=$prFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    switch ($field) {
+        'number' { $wrongPr.number=11 }
+        'head' { $wrongPr.head.sha='d'*40 }
+        'base' { $wrongPr.base.ref='main' }
+        'repository' { $wrongPr.head.repo.full_name='unrelated/fork' }
+    }
+    Assert-Test (@(Get-PythonFinalHeadWrapperRuns @(@{workflow_runs=@($runFixture)}) $prFixture @($wrongPr)).Count -eq 0) "Wrong exact-commit PR association must be rejected: $field"
+}
+foreach ($field in @('head_sha','head_branch','event','path','created_at','repository','head_repository','pull_requests')) {
+    $bad=$runFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    switch ($field) {
+        'head_sha' { $bad.head_sha='d'*40 }
+        'head_branch' { $bad.head_branch='unrelated' }
+        'event' { $bad.event='push' }
+        'path' { $bad.path='.github/workflows/unrelated.yml' }
+        'created_at' { $bad.created_at='2026-10-29T00:11:00Z' }
+        'repository' { $bad.repository.full_name='unrelated/repository' }
+        'head_repository' { $bad.head_repository.full_name='unrelated/fork' }
+        'pull_requests' { $bad.pull_requests=@(@{number=11}) }
+    }
+    Assert-Test (@(Get-PythonFinalHeadWrapperRuns @(@{workflow_runs=@($bad)}) $prFixture @($prFixture)).Count -eq 0) "Unrelated final-head CI metadata must be rejected: $field"
+}
+$linked=$runFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$linked.pull_requests=@(@{number=10})
+Assert-Test (@(Get-PythonFinalHeadWrapperRuns @(@{workflow_runs=@($linked)}) $prFixture @()).Count -eq 1) 'Explicit matching PR metadata must remain valid.'
+$failed=$runFixture | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$failed.id=101;$failed.conclusion='failure'
+$ordered=@(Get-PythonFinalHeadWrapperRuns @(@{workflow_runs=@($runFixture,$failed)}) $prFixture @($prFixture) | Sort-Object { [long]$_.id } -Descending)
+Assert-Test ($ordered[0].conclusion -ceq 'failure') 'Latest failed exact-head CI must remain visible to acceptance; never select an older green run.'
+
 # Exercise the actual preflight request builder with queued-only API stubs.
 # No remote command runs and no successful ROS runtime evidence is fabricated.
 $script:posted=$null;$script:requestRole='cli';$script:ambiguous=$false;$script:wrongSource=$false
