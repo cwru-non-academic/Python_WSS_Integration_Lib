@@ -1,6 +1,8 @@
 {
   "maxWSS": 1,
   "firmware": "H03",
+  "broadcastTarget": "0x8F",
+  "wssTargets": ["0x81", "0x82", "0x83"],
   "useConfigAmpCurves": false,
   "ampCurves": [
     {
