@@ -44,7 +44,11 @@ class ReceiverContractTests(unittest.TestCase):
         self.assertEqual(WssConfig(**paths).transport, "serial")
         self.assertEqual(WssConfig(**paths, transport="ble", ble_device_name="target").transport, "ble")
         self.assertTrue(WssConfig(**paths, transport="ble", ble_auto=True).ble_auto)
-        for options in ({"transport": "ble"}, {"ble_device_name": "target"},
+        self.assertEqual(WssConfig(**paths, transport="ble", ble_device_name=" WSS ").ble_device_name, " WSS ")
+        self.assertEqual(WssConfig(**paths, transport="ble", ble_device_id="explicit-id").ble_device_id, "explicit-id")
+        for options in ({"transport": "ble", "ble_device_name": "   "},
+                        {"transport": "ble", "ble_device_id": "\t"},
+                        {"transport": "ble"}, {"ble_device_name": "target"},
                         {"transport": "ble", "ble_auto": True, "test_mode": True},
                         {"transport": "ble", "ble_auto": True, "serial_port": "COM1"}):
             with self.subTest(options=options), self.assertRaises(ValueError):

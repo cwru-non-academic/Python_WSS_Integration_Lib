@@ -99,3 +99,37 @@ controller initialization/lifecycle. Do not combine BLE selection with Serial,
 Test or Conformance options. The exact legacy distribution does not provide a
 macOS BLE backend; the new declared distribution requires both its managed backend
 and universal native bridge. See [.github/MACOS_BLE_RECEIVER.md](.github/MACOS_BLE_RECEIVER.md).
+
+## BLE platform loading and device configuration
+
+BLE is selected explicitly through the existing Core transport factory. Provide
+an exact nonblank name, device ID, or `ble_auto=True`; whitespace-only targets are
+rejected before loading or connecting. Nonblank names are preserved exactly.
+On macOS use a compatible CoreCLR runtime (for example,
+`PYTHONNET_RUNTIME=coreclr`) and retain both
+`backends/macos/WSS.Transport.BLE.MacOS.dll` and its paired universal
+`libwss_macos_ble.dylib`. Missing declared assets fail platform validation.
+Windows, Linux and macOS select their own backend; the loader never substitutes
+another platform's backend.
+
+The platform checks verify installed-wheel loading and actual BLE constructor
+routing. macOS CI additionally checks native exports/ABI and creates/disposes an
+inert native context. They do not scan, connect to a device, or demonstrate
+physical stimulation. The shared ten-case canonical suite uses Core's emulator
+and unchanged validators. Real device, permissions and radio behavior require
+separate manual validation on the target OS.
+
+`Config/stimConfig.json` now exposes existing Core receiver settings:
+`broadcastTarget: "0x8F"` and `wssTargets: ["0x81", "0x82", "0x83"]`. These
+are receiver addresses, not a configurable host sender byte. Existing user files
+are not replaced; legacy files use the historical defaults, and custom addresses
+such as Wss1 `"0x80"` remain supported. Keep hardware-specific firmware and
+calibration settings. Stop and reconstruct/reinitialize the controller after
+changing addresses so Core creates a new address map; `LoadCoreConfigFile()` alone
+does not rebuild it.
+
+`Initialize()` starts asynchronous device setup; it does not establish readiness.
+Use `Ready()`/`Started()` and the resolved `WssConfig.log_path` for diagnostics.
+Core errors and Python tick failures already flow through the file sink. Config
+and DLL paths belong to the consuming application; pass explicit paths when
+using an installed wheel outside the source/submodule layout.
