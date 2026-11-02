@@ -1,6 +1,11 @@
 name: Dispatch Python application promotion
-run-name: Dispatch Python application promotion for ${{ github.event.pull_request.merge_commit_sha }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Resume application promotion / wss-{0}', inputs.producer_run_id) || format('Dispatch Python application promotion for {0}', github.event.pull_request.merge_commit_sha) }}
 on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id: {description: Canonical staged Core dev producer run, required: true, type: string}
+      barrier_run_id: {description: Trusted Core main barrier emitter run, required: true, type: string}
+      barrier_attempt: {description: Exact barrier emitter attempt, required: true, type: string}
   pull_request_target:
     types: [closed]
     branches: [dev]
@@ -9,19 +14,21 @@ permissions:
   pull-requests: read
   actions: read
 concurrency:
-  group: python-dispatch-${{ github.event.pull_request.merge_commit_sha || github.run_id }}
+  group: python-dispatch-${{ inputs.producer_run_id || github.event.pull_request.merge_commit_sha || github.run_id }}
   cancel-in-progress: false
 jobs:
   plan:
     name: Resolve Python application fan-out
     if: >-
-      github.event.pull_request.merged == true &&
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.type == 'Bot' &&
-      startsWith(github.event.pull_request.head.ref, 'automation/python-wss-')
+      startsWith(github.event.pull_request.head.ref, 'automation/python-wss-'))
     runs-on: windows-2022
     outputs:
-      applications: ${{ steps.plan.outputs.applications }}
+      applications: ${{ steps.stage.outputs.applications }}
+      dispatch_allowed: ${{ steps.stage.outputs.dispatch_allowed }}
       read_repositories: ${{ steps.plan.outputs.read_repositories }}
     steps:
       - uses: actions/checkout@v4
@@ -33,18 +40,52 @@ jobs:
         shell: pwsh
         run: |
           . ./.github/scripts/PythonPromotion.ps1
-          $event = Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
-          $approval = Read-PythonApprovalMarker $event.pull_request.body "$env:RUNNER_TEMP/approval.json"
-          $roles = @(Get-PythonDispatchApplications $approval | ForEach-Object role)
           $read = @('WSSCore','Python_WSS_Integration_Lib','CLI_Python_WSS_Application')
-          if ($approval.schema -ceq 'wss-python-promotion/v2') { $read += 'ROS_Python_WSS_Application' }
-          $apps = @($roles | ForEach-Object { $app=Get-PythonApplication $_; @{role=$_;label=$_.ToUpperInvariant();repository=($app.repository -split '/')[1]} })
-          "applications=$($apps | ConvertTo-Json -Depth 4 -Compress -AsArray)" >> $env:GITHUB_OUTPUT
+          if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch') {
+            if ($env:GITHUB_REF -cne 'refs/heads/main') { throw 'Only main barrier resumes are accepted.' }
+            $read += 'ROS_Python_WSS_Application'
+          } else {
+            $event = Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+            $approval = Read-PythonApprovalMarker $event.pull_request.body "$env:RUNNER_TEMP/approval.json"
+            if ($approval.schema -ceq 'wss-python-promotion/v2') { $read += 'ROS_Python_WSS_Application' }
+          }
           'read_repositories<<PYTHON_APPLICATIONS' >> $env:GITHUB_OUTPUT
           $read >> $env:GITHUB_OUTPUT
           'PYTHON_APPLICATIONS' >> $env:GITHUB_OUTPUT
+      - uses: actions/create-github-app-token@v2
+        id: read
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: ${{ steps.plan.outputs.read_repositories }}
+          permission-contents: read
+          permission-actions: read
+          permission-pull-requests: read
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          node-version: '24'
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: main
+          path: core
+          token: ${{ steps.read.outputs.token }}
+          persist-credentials: false
+      - name: Resolve legacy fan-out or verified integration barrier
+        id: stage
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+          PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+          BARRIER_RUN_ID: ${{ inputs.barrier_run_id }}
+          BARRIER_ATTEMPT: ${{ inputs.barrier_attempt }}
+        run: ./.github/scripts/Resolve-PythonFanoutStage.ps1 -EventPath $env:GITHUB_EVENT_PATH -WorkRoot "$env:RUNNER_TEMP/python-stage-plan" -CoreToolsRoot "$env:GITHUB_WORKSPACE/core" -ProducerRunId $env:PRODUCER_RUN_ID -BarrierRunId $env:BARRIER_RUN_ID -BarrierAttempt $env:BARRIER_ATTEMPT
   dispatch:
     needs: plan
+    if: needs.plan.outputs.dispatch_allowed == 'true'
     name: Dispatch ${{ matrix.application.label }} promotion
     strategy:
       fail-fast: false
@@ -71,13 +112,42 @@ jobs:
           permission-contents: read
           permission-actions: read
           permission-pull-requests: read
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          node-version: '24'
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: main
+          path: core
+          token: ${{ steps.read.outputs.token }}
+          persist-credentials: false
+      - name: Reconstruct only the authorized merge event
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+          PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+          BARRIER_RUN_ID: ${{ inputs.barrier_run_id }}
+          BARRIER_ATTEMPT: ${{ inputs.barrier_attempt }}
+        run: ./.github/scripts/Resolve-PythonFanoutStage.ps1 -EventPath $env:GITHUB_EVENT_PATH -WorkRoot "$env:RUNNER_TEMP/python-stage-gate" -CoreToolsRoot "$env:GITHUB_WORKSPACE/core" -ProducerRunId $env:PRODUCER_RUN_ID -BarrierRunId $env:BARRIER_RUN_ID -BarrierAttempt $env:BARRIER_ATTEMPT
       - name: Validate merged dependency-only PR, provenance and normal CI
         id: validate
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.read.outputs.token }}
           APPLICATION_ROLE: ${{ matrix.application.role }}
-        run: ./.github/scripts/Dispatch-PythonCli.ps1 -Role $env:APPLICATION_ROLE -EventPath $env:GITHUB_EVENT_PATH -WorkRoot "$env:RUNNER_TEMP/python-dispatch" -ValidateOnly
+        run: ./.github/scripts/Dispatch-PythonCli.ps1 -Role $env:APPLICATION_ROLE -EventPath "$env:RUNNER_TEMP/python-stage-gate/verified-event.json" -WorkRoot "$env:RUNNER_TEMP/python-dispatch" -ValidateOnly
+      - name: Recheck the integration barrier immediately before application writes
+        if: github.event_name == 'workflow_dispatch' && steps.validate.outputs.dispatch_needed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+          PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+          BARRIER_RUN_ID: ${{ inputs.barrier_run_id }}
+          BARRIER_ATTEMPT: ${{ inputs.barrier_attempt }}
+        run: ./.github/scripts/Resolve-PythonFanoutStage.ps1 -EventPath $env:GITHUB_EVENT_PATH -WorkRoot "$env:RUNNER_TEMP/python-stage-recheck" -CoreToolsRoot "$env:GITHUB_WORKSPACE/core" -ProducerRunId $env:PRODUCER_RUN_ID -BarrierRunId $env:BARRIER_RUN_ID -BarrierAttempt $env:BARRIER_ATTEMPT
       - name: Mint target-only application Actions token after validation
         if: steps.validate.outputs.dispatch_needed == 'true'
         uses: actions/create-github-app-token@v2
