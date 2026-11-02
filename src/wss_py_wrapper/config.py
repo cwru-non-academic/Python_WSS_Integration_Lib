@@ -73,7 +73,9 @@ class WssConfig:
         if self.transport == "ble":
             if self.test_mode or self.conformance_mode or self.serial_port:
                 raise ValueError("BLE cannot be combined with serial, test or conformance selection.")
-            if not (self.ble_auto or self.ble_device_name or self.ble_device_id):
+            named = self.ble_device_name and self.ble_device_name.strip()
+            identified = self.ble_device_id and self.ble_device_id.strip()
+            if not (self.ble_auto or named or identified):
                 raise ValueError("BLE requires a device name, device id or explicit auto-selection.")
         elif self.ble_auto or self.ble_device_name or self.ble_device_id:
             raise ValueError("BLE device options require transport='ble'.")
