@@ -133,3 +133,20 @@ Use `Ready()`/`Started()` and the resolved `WssConfig.log_path` for diagnostics.
 Core errors and Python tick failures already flow through the file sink. Config
 and DLL paths belong to the consuming application; pass explicit paths when
 using an installed wheel outside the source/submodule layout.
+
+## Staged dev application fan-out
+
+The receiver declaration in `.github/dev-propagation.json` participates in Core's
+integration barrier. A merged dependency PR whose verified Core producer commit
+contains `tools/ci/dev-propagation.json` waits without application write tokens.
+Legacy immediate fan-out is retained only when that file is absent from the
+complete, verified producer commit tree; API errors or unknown policies fail.
+
+Core resumes the registered main workflow with `producer_run_id`,
+`barrier_run_id` and `barrier_attempt`. Trusted Core main tooling runs
+`verify-barrier` before the existing approval, parent/payload, normal-CI and
+application dispatch validators, and again immediately before a write token.
+No live settings, credentials, payloads or dependency pins are changed by these
+hooks. Both branches need the receiver declaration and workflow before a staged
+Core producer can freeze its plan. A real staged resume remains an integration
+check after deployment; ordinary PR CI alone does not prove live fan-out.
