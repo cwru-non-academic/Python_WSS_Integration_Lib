@@ -19,9 +19,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: Windows, os: windows-2022}
-          - {name: Ubuntu, os: ubuntu-latest}
-          - {name: macOS, os: macos-15-intel}
+          - name: Windows
+            os: windows-2022
+            arch: x64
+          - name: Ubuntu
+            os: ubuntu-latest
+            arch: x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -31,6 +34,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          architecture: ${{ matrix.arch }}
       - run: python -m pip install build==1.2.2.post1 pythonnet==3.0.5
       - uses: actions/create-github-app-token@v2
         id: read
@@ -98,3 +102,138 @@ jobs:
             ${{ runner.temp }}/platform-results/platform.json
             ${{ runner.temp }}/platform-results/python-smoke.json
             ${{ runner.temp }}/platform-results/platform.trx
+
+  macos-architectures:
+    name: ${{ inputs.role == 'wrapper' && 'Preflight compatibility' || 'CLI platform compatibility' }} (${{ matrix.display }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS-x64
+            display: macOS Intel (x64)
+            os: macos-15-intel
+            arch: x64
+          - name: macOS-arm64
+            display: macOS Apple Silicon (arm64)
+            os: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      WSS_EXPECTED_ARCHITECTURE: ${{ matrix.arch }}
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.sdk }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.arch }}
+      - run: python -m pip install build==1.2.2.post1 pythonnet==3.0.5
+      - uses: actions/create-github-app-token@v2
+        id: read
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ inputs.wrapper_sha }}
+          path: wrapper
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: inputs.role == 'cli'
+        with:
+          repository: cwru-non-academic/CLI_Python_WSS_Application
+          ref: ${{ inputs.cli_sha }}
+          path: cli
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/CSharp_WSS_Integration_Lib
+          ref: ${{ inputs.fixture_sha }}
+          path: fixture
+          persist-credentials: false
+      - name: Require canonical dev-push provenance and resolve the exact archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+          CANDIDATE_JSON: ${{ inputs.candidate_json }}
+        run: |
+          . ./wrapper/.github/scripts/PythonPromotion.ps1
+          $candidate = $env:CANDIDATE_JSON | ConvertFrom-Json
+          Assert-PythonProducer $candidate
+          ./wrapper/.github/scripts/Resolve-WssRelease.ps1 -RunId $candidate.run_id -ExpectedArtifactId $candidate.artifact_id -ExpectedCommit $candidate.commit -ArchiveName $candidate.archive -ExpectedSha256 $candidate.sha256 -OutputRoot "$env:RUNNER_TEMP/resolved"
+      - name: Verify candidate package, production transport selection and native ABI
+        shell: pwsh
+        env:
+          ROLE: ${{ inputs.role }}
+          WRAPPER_SHA: ${{ inputs.wrapper_sha }}
+          CLI_SHA: ${{ inputs.cli_sha }}
+        run: |
+          $options = @{
+            WrapperRoot = "$env:GITHUB_WORKSPACE/wrapper"
+            WrapperSha = $env:WRAPPER_SHA
+            FixtureRoot = "$env:GITHUB_WORKSPACE/fixture"
+            OutputRoot = "$env:RUNNER_TEMP/platform-results"
+            Mode = 'candidate'
+            ArtifactRoot = "$env:RUNNER_TEMP/resolved/extracted/WSS-Universal"
+            CandidatePath = "$env:RUNNER_TEMP/resolved/candidate.json"
+          }
+          if ($env:ROLE -ceq 'cli') { $options.CliRoot = "$env:GITHUB_WORKSPACE/cli"; $options.CliSha = $env:CLI_SHA }
+          ./wrapper/.github/scripts/Invoke-PlatformCompatibility.ps1 @options
+      - name: Record native macOS architecture worker outcome
+        if: always()
+        shell: pwsh
+        env:
+          WORKER_CONCLUSION: ${{ job.status }}
+          EXPECTED_ARCHITECTURE: ${{ matrix.arch }}
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'platform-results'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          @{schema='wss-macos-worker/v1';architecture=$env:EXPECTED_ARCHITECTURE;conclusion=$env:WORKER_CONCLUSION;repository=$env:GITHUB_REPOSITORY;run_id=$env:GITHUB_RUN_ID;source_sha=$env:GITHUB_SHA} | ConvertTo-Json | Set-Content (Join-Path $root 'outcome.json')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-preflight-platform-${{ matrix.name }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/platform-results/platform.json
+            ${{ runner.temp }}/platform-results/outcome.json
+            ${{ runner.temp }}/platform-results/python-smoke.json
+            ${{ runner.temp }}/platform-results/platform.trx
+
+  macos-compatibility:
+    name: ${{ inputs.role == 'wrapper' && 'Preflight compatibility' || 'CLI platform compatibility' }} (macOS)
+    if: always()
+    needs: [macos-architectures]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ inputs.wrapper_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-preflight-platform-macOS-*
+          path: ${{ runner.temp }}/macos-inputs
+      - name: Require native Intel and Apple Silicon consumer proofs
+        shell: pwsh
+        env:
+          MACOS_WORKER_RESULT: ${{ needs.macos-architectures.result }}
+        run: |
+          ./tools/.github/scripts/Complete-MacOSConsumer.ps1 -InputRoot "$env:RUNNER_TEMP/macos-inputs" -OutputRoot "$env:RUNNER_TEMP/macos-complete" -ArtifactPrefix 'python-preflight-platform' -EvidenceSubdirectory '' -WorkerResult $env:MACOS_WORKER_RESULT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-preflight-platform-macOS
+          retention-days: 14
+          if-no-files-found: error
+          path: ${{ runner.temp }}/macos-complete/
