@@ -1,8 +1,8 @@
 # Dev beta acceptance receiver
 
-Implements the dev-only acceptance interface in WSSCore PR #18 at immutable
-`de631fe4f1b80b5b4e2c6691f444625ef1730499`. Main/stable is disabled and MATLAB
-is excluded. This tooling never creates dependency PRs, merges them, or releases.
+Implements the dev-only acceptance interface in WSSCore PR #28 at immutable
+`be8546ca46256696bb366925b0094023d7cefc2c`. Main/stable publication remains disabled. All nine downstream targets, including
+MATLAB, are required by the shared contract. This tooling never creates dependency PRs, merges them, or releases.
 
 Deploy the receipt workflow and validator code through reviewed PRs to main and
 dev before Core enables frozen-plan production. Default/main also needs the
