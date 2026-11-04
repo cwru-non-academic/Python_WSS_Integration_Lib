@@ -1,5 +1,5 @@
 export const WRAPPER='cwru-non-academic/Python_WSS_Integration_Lib';
-export const CONTRACT_SHA='de631fe4f1b80b5b4e2c6691f444625ef1730499';
+export const CONTRACT_SHA='be8546ca46256696bb366925b0094023d7cefc2c';
 export const RECEIPT_WORKFLOW='.github/workflows/release-receipt.yml';
 export const TARGETS={
   'python-wrapper':{role:'wrapper',kind:'payload',repository:WRAPPER,workflow:'.github/workflows/wss-compatibility.yml',parents:{},
