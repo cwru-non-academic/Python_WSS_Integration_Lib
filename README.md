@@ -218,11 +218,10 @@ promotion; it is never relabeled as CLI acceptance. Normal CI also runs the
 
 The current executable fixture commit and content digest are declared in
 [`.github/python-ci.json`](.github/python-ci.json); CI reads those fields directly.
-The original canonical fixture was introduced at `CSharp_WSS_Integration_Lib`
-commit `7145e2307f997f703748530bf74311ef94455e98`, SHA256
-`1cdfb9448a1776011eadc9aef8356362216032013a4f268f50242746c50a0b44`.
-That historical commit identifies the original cases; it is not the current
-fixture checkout pin. The canonical fixture is reused directly. Only its controller factory and type alias change. All ten
+The central [verification pin reference](https://github.com/cwru-non-academic/WSS_Documentation/blob/dev/apiDocs/conceptual/verification-pin-reference.md)
+explains fixture and receiver pins as a dated inspection snapshot, rather than a
+list of currently deployed values. The reviewed configuration remains authoritative.
+The canonical fixture is reused directly. Only its controller factory and type alias change. All ten
 canonical cases, shared scenarios/values, finite waits, evaluators, Assert.Multiple
 blocks and eighteen Assert.That expressions remain unchanged. Case names retain
 the canonical CSharp wording so identities can be compared across repositories.
@@ -313,10 +312,9 @@ success. Existing `WSS_GITHUB_APP_ID` / `WSS_GITHUB_APP_PRIVATE_KEY` configurati
 and App access to the integration, CLI and ROS repositories are required but are not created or
 changed here. A missing capability stops that hop with an actionable failure.
 
-The initial payload is the independently downloaded Core run `39092192696`,
-artifact `12123267360`, commit `5ec22900587587e9e9465ffa53d04d7d1ce13545`,
-archive SHA256 `3bc303096594978fa77e95cd80901a8fb72d26c42a7408c38c8668563b6f1a7e`.
-`python-bootstrap.json` preserves its C# reference approval explicitly as C#
+The historical initial payload and its exact producer/artifact/archive identities
+are recorded in [`.github/python-bootstrap.json`](.github/python-bootstrap.json).
+It preserves its C# reference approval explicitly as C#
 evidence; new Python CI establishes Python acceptance. Copying that baseline or
 observing an unchanged-payload no-op does not establish full automatic propagation.
 
@@ -407,10 +405,8 @@ native smoke reports. Canonical producer proof additionally requires:
 
 The existing successful `artifacts.yml` **push to dev**, dev ancestry, exact
 run/artifact/archive/checksum and whole-run-success requirements remain intact.
-An otherwise green Core PR run is rejected. The reviewed Core PR #15 artifact
-(`40749828245` / `12843059112`, SHA256
-`e0862dc5165c1790853f5d30a6fe1221fbe7d90295bc2ff5c48f465e903cddf8`)
-can be used for integrity-checked local receiver verification; such evidence is
+An otherwise green Core PR run is rejected. Historical diagnostic artifacts remain
+identified by their original workflow evidence. Integrity-checked local receiver verification is
 not candidate-preflight approval and cannot authorize automatic publication.
 
 ### Producer and receiver prerequisites
@@ -468,11 +464,11 @@ it does not create installation grants or change security settings.
 
 ### Versioned approval and evidence
 
-New wrapper promotion requires `wss-python-promotion/v2`. The example below
-retains the original canonical fixture identity for provenance; actual approvals
-use the current `fixture_commit` and `fixture_sha256` from
+New wrapper promotion requires `wss-python-promotion/v2`. The example below uses
+placeholders for exact identities. Actual approvals use the current
+`fixture_commit` and `fixture_sha256` from
 [`.github/python-ci.json`](.github/python-ci.json), as the publisher does. Copying
-the historical fixture commit into a current approval can fail validation.
+a historical fixture commit into a current approval can fail validation.
 
 ```json
 {
@@ -481,7 +477,7 @@ the historical fixture commit into a current approval can fail validation.
   "wrapper": {"source_sha": "FULL_SHA", "preflight_run_id": "ID"},
   "cli": {"source_sha": "FULL_SHA", "preflight_run_id": "ID"},
   "ros": {"source_sha": "FULL_SHA", "preflight_run_id": "ID"},
-  "fixture": {"commit": "7145e2307f997f703748530bf74311ef94455e98", "sha256": "1cdfb9448a1776011eadc9aef8356362216032013a4f268f50242746c50a0b44"},
+  "fixture": {"commit": "FIXTURE_COMMIT_FROM_CONFIG", "sha256": "FIXTURE_SHA256_FROM_CONFIG"},
   "projection_sha256": "SHA256"
 }
 ```
@@ -553,8 +549,9 @@ An identical payload or gitlink remains a verified no-op with no artificial PR.
 
 ## Dev beta acceptance receiver
 
-Implements the dev-only acceptance interface in WSSCore PR #28 at immutable
-`be8546ca46256696bb366925b0094023d7cefc2c`. Main/stable publication remains disabled. All nine downstream targets, including
+Implements the dev-only acceptance interface defined by the reviewed WSSCore
+verifier selected in [the receipt workflow](.github/workflows/release-receipt.yml).
+Main/stable publication remains disabled. All nine downstream targets, including
 MATLAB, are required by the shared contract. This tooling never creates dependency PRs, merges them, or releases.
 
 The receipt workflow and validators must be deployed through reviewed PRs to main
