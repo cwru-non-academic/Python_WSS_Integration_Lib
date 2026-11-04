@@ -1,4 +1,5 @@
 . "$PSScriptRoot/PythonContract.ps1"
+. "$PSScriptRoot/MacOSConsumerEvidence.ps1"
 
 function Wait-PythonRun([string]$Repository,[string]$RunId,[string]$Sha,[string]$Workflow,[string]$Event,[int]$TimeoutSeconds=2400) {
     Assert-PythonSha $Sha
@@ -151,7 +152,7 @@ function Get-PythonEvidenceJobs([ValidateSet('wrapper','cli','ros')][string]$Rol
 function Assert-PythonPlatformEvidence($Proof,$Smoke,$Canonical,$Candidate,[string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Role,[string]$FixtureSha,[string]$Platform) {
     Assert-PythonSameCandidate $Proof.candidate $Candidate
     $expectedCli = if ($Role -ceq 'cli') { $SourceSha } else { '' }
-    if ($Proof.schema -cne 'wss-python-platform/v1' -or $Proof.mode -cne 'candidate' -or
+    if ($Proof.schema -cnotin @('wss-python-platform/v1','wss-python-platform/v2') -or $Proof.mode -cne 'candidate' -or
         $Proof.wrapper_sha -cne $Canonical.wrapper_sha -or $Proof.cli_sha -cne $expectedCli -or
         $Proof.fixture_sha -cne $FixtureSha -or $Proof.projection_sha256 -cne $Canonical.projection_sha256 -or
         $Proof.universal_contract -cne 'macos-ble-v1' -or $Proof.run_repository -cne $Repository -or
@@ -225,6 +226,16 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
         foreach ($platform in @('Windows','Ubuntu','macOS')) {
             $platformRoot = Join-Path $Root "platform-$platform"
             $null=Invoke-PythonGh @('run','download',$RunId,'--repo',$Repository,'--name',"python-preflight-platform-$platform",'--dir',$platformRoot)
+            if ($platform -ceq 'macOS') {
+                $null=Assert-WssMacOSPair $platformRoot $Repository $RunId $SourceSha
+                foreach ($architecture in @('x64','arm64')) {
+                    $architectureRoot=Join-Path $platformRoot $architecture
+                    $proof=Get-Content (Join-Path $architectureRoot 'platform.json') -Raw | ConvertFrom-Json
+                    $smoke=Get-Content (Join-Path $architectureRoot 'python-smoke.json') -Raw | ConvertFrom-Json
+                    Assert-PythonPlatformEvidence $proof $smoke $e $Candidate $Repository $RunId $SourceSha $Role $Config.fixture_commit $platform
+                }
+                continue
+            }
             $proof = Get-Content (Join-Path $platformRoot 'platform.json') -Raw | ConvertFrom-Json
             $smokePath = Join-Path $platformRoot 'python-smoke.json'
             if ((Get-FileHash $smokePath).Hash.ToLowerInvariant() -cne $proof.python_smoke_sha256) { throw 'Platform smoke evidence hash mismatch.' }

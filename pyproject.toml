@@ -12,11 +12,6 @@ dependencies = [
   "pythonnet>=3.0.0",
 ]
 
-[project.optional-dependencies]
-docs = [
-  "sphinx>=7",
-]
-
 [tool.setuptools]
 package-dir = {"" = "src"}
 

@@ -4,13 +4,59 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import errno
 import hashlib
 import json
 import os
+import platform as platform_info
 from pathlib import Path
 import struct
 import subprocess
 import sys
+
+
+def require_native_architecture(expected, machine, clr_process, os_arch, runner_arch, translated):
+    """Reject another process architecture or translated execution on macOS."""
+    aliases = {"x86_64": "x64", "amd64": "x64", "x64": "x64",
+               "aarch64": "arm64", "arm64": "arm64"}
+    actual = aliases.get(machine.lower())
+    if (expected not in ("x64", "arm64") or actual != expected
+            or clr_process.lower() != expected or os_arch.lower() != expected
+            or runner_arch.lower() != expected or translated is not False):
+        raise RuntimeError(f"Native macOS {expected} required: Python={machine}, "
+                           f"CLR={clr_process}, OS={os_arch}, runner={runner_arch}, "
+                           f"translated={translated}")
+    return actual
+
+
+def runtime_identity():
+    """Record the loaded Python/CLR identity, rejecting Rosetta on macOS."""
+    from System.Runtime.InteropServices import RuntimeInformation
+
+    process_arch = str(RuntimeInformation.ProcessArchitecture).lower()
+    os_arch = str(RuntimeInformation.OSArchitecture).lower()
+    runner_arch = os.environ.get("RUNNER_ARCH", "").lower()
+    translated = False
+    if sys.platform == "darwin":
+        libc = ctypes.CDLL(None, use_errno=True)
+        value, size = ctypes.c_int(), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+        libc.sysctlbyname.argtypes = [ctypes.c_char_p, ctypes.c_void_p,
+                                     ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
+        libc.sysctlbyname.restype = ctypes.c_int
+        result = libc.sysctlbyname(b"sysctl.proc_translated", ctypes.byref(value),
+                                  ctypes.byref(size), None, 0)
+        if result != 0 and ctypes.get_errno() != errno.ENOENT:
+            raise OSError(ctypes.get_errno(), "Cannot determine macOS translation status")
+        if result == 0 and value.value not in (0, 1):
+            raise RuntimeError("Unknown macOS translation status")
+        translated = result == 0 and value.value == 1
+        require_native_architecture(os.environ.get("WSS_EXPECTED_ARCHITECTURE"),
+                                    platform_info.machine(), process_arch, os_arch,
+                                    runner_arch, translated)
+    return {"schema": "wss-python-smoke/v2", "os": sys.platform,
+            "architecture": process_arch, "dotnet_process_architecture": process_arch,
+            "os_architecture": os_arch, "runner_architecture": runner_arch,
+            "translated": translated, "execution": "native"}
 
 
 def verify_macos_inventory(payload: Path, contract: str) -> bool:
@@ -104,6 +150,7 @@ def main() -> None:
     if not Path(wss_py_wrapper.__file__).resolve().is_relative_to(args.installed.resolve()):
         raise RuntimeError("Smoke check imported source instead of the installed wheel")
     WssLoader(collect_dlls(args.payload)).load()
+    execution_identity = runtime_identity()
     if macos_declared:
         verify_macos_managed(args.payload)
     from System.IO.Ports import SerialPort
@@ -168,7 +215,7 @@ def main() -> None:
             ble_routing = args.cli
         finally:
             transport.Dispose()
-    args.output.write_text(json.dumps({"contract": args.contract, "macos_ble_declared": macos_declared,
+    args.output.write_text(json.dumps({**execution_identity, "contract": args.contract, "macos_ble_declared": macos_declared,
                                       "ble": ble_status, "cli_routing": ble_routing,
                                       "physical_io": False}, indent=2))
     print(f"BLE: {ble_status}")
