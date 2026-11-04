@@ -3,4 +3,3 @@
 
 pythonnet>=3.0.0
 build>=1.2.0
-sphinx>=7.0.0
