@@ -150,7 +150,7 @@ def main() -> None:
     if not Path(wss_py_wrapper.__file__).resolve().is_relative_to(args.installed.resolve()):
         raise RuntimeError("Smoke check imported source instead of the installed wheel")
     WssLoader(collect_dlls(args.payload)).load()
-    identity = runtime_identity()
+    execution_identity = runtime_identity()
     if macos_declared:
         verify_macos_managed(args.payload)
     from System.IO.Ports import SerialPort
@@ -215,7 +215,7 @@ def main() -> None:
             ble_routing = args.cli
         finally:
             transport.Dispose()
-    args.output.write_text(json.dumps({**identity, "contract": args.contract, "macos_ble_declared": macos_declared,
+    args.output.write_text(json.dumps({**execution_identity, "contract": args.contract, "macos_ble_declared": macos_declared,
                                       "ble": ble_status, "cli_routing": ble_routing,
                                       "physical_io": False}, indent=2))
     print(f"BLE: {ble_status}")
