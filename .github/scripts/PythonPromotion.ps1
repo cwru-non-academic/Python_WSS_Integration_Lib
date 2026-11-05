@@ -2,18 +2,8 @@
 . "$PSScriptRoot/MacOSConsumerEvidence.ps1"
 
 function Wait-PythonRun([string]$Repository,[string]$RunId,[string]$Sha,[string]$Workflow,[string]$Event,[int]$TimeoutSeconds=2400) {
-    Assert-PythonSha $Sha
-    $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    do {
-        $run=Invoke-PythonGh -Arguments @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
-        if ($run.repository.full_name -cne $Repository -or $run.path -cne ".github/workflows/$Workflow" -or $run.head_sha -cne $Sha -or $run.event -cne $Event) { throw 'Workflow run identity mismatch.' }
-        if ($run.status -ceq 'completed') {
-            if ($run.conclusion -cne 'success') { throw 'Required workflow did not succeed; never substitute another green run.' }
-            return $run
-        }
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for exact workflow.' }
-        Start-Sleep -Seconds 15
-    } while ($true)
+    . "$PSScriptRoot/wss-ci/Preflight.ps1"
+    Wait-WssCiRun $Repository $RunId $Sha $Workflow $Event $TimeoutSeconds
 }
 function Assert-PythonProducer($Candidate) {
     Assert-PythonCandidate $Candidate
@@ -43,38 +33,10 @@ function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSh
     Assert-PythonSha $WrapperSha
     Assert-PythonSha $ApplicationSha
     if ($Repository -cnotin @($PythonWrapperRepository,$PythonCliRepository,$PythonRosRepository)) { throw 'Unknown Python preflight repository.' }
-    $correlation="wss-$($Candidate.run_id)-$($Candidate.artifact_id)-$WrapperSha-$ApplicationSha"
-    $title="WSS preflight $($Candidate.run_id) / $correlation"
-    function Find-Run {
-        $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
-        $runs=@($pages | ForEach-Object { $_.workflow_runs } | Where-Object { $_.display_title -ceq $title })
-        if ($runs.Count -gt 1) { throw 'Ambiguous correlated preflight; no run selection or redispatch.' }
-        if ($runs.Count -eq 1) { return $runs[0] }
-    }
-    $found=Find-Run
-    if (!$found) {
-        $inputs=@{candidate_json=($Candidate | ConvertTo-Json -Depth 5 -Compress);wrapper_sha=$WrapperSha;correlation_id=$correlation}
-        $sourceField=if ($Repository -ceq $PythonRosRepository) { 'ros_sha' } else { 'cli_sha' }
-        $inputs[$sourceField]=$ApplicationSha
-        $body=@{ref='dev';inputs=$inputs} | ConvertTo-Json -Depth 5 -Compress
-        if (!$env:PYTHON_PREFLIGHT_TOKEN) { throw 'Scoped downstream Actions-write token required.' }
-        $readToken=$env:GH_TOKEN
-        try {
-            $env:GH_TOKEN=$env:PYTHON_PREFLIGHT_TOKEN
-            $body | & gh api --method POST "repos/$Repository/actions/workflows/wss-preflight.yml/dispatches" --input -
-            if ($LASTEXITCODE -ne 0) { throw 'Preflight dispatch failed/uncertain. Inspect before any retry.' }
-        } finally { $env:GH_TOKEN=$readToken }
-        $deadline=[DateTime]::UtcNow.AddSeconds(180)
-        do {
-            $found=Find-Run
-            if ($found) { break }
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'Dispatched preflight not discovered; inspect before retrying.' }
-            Start-Sleep -Seconds 5
-        } while ($true)
-    }
-    $expectedSha=if ($Repository -ceq $PythonWrapperRepository) { $WrapperSha } else { $ApplicationSha }
-    if ($found.head_sha -cne $expectedSha) { throw 'Correlated preflight source changed; no automatic redispatch.' }
-    if ($NoWait) { return $found }
+    . "$PSScriptRoot/wss-ci/Preflight.ps1"
+    $found=Start-WssCiPreflight -Repository $Repository -Candidate $Candidate -WrapperSha $WrapperSha -ApplicationSha $ApplicationSha -DispatchToken $env:PYTHON_PREFLIGHT_TOKEN
+    if($NoWait){return $found}
+    $expectedSha=if($Repository -ceq $PythonWrapperRepository){$WrapperSha}else{$ApplicationSha}
     Wait-PythonRun $Repository ([string]$found.id) $expectedSha 'wss-preflight.yml' 'workflow_dispatch'
 }
 function Get-PythonApprovalRoles($Approval) {
