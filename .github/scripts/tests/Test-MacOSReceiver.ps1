@@ -69,10 +69,7 @@ foreach ($field in @('macos_ble_declared','physical_io','cli_routing')) {
     $badSmoke.$field = !$badSmoke.$field
     Reject { Assert-PythonPlatformEvidence $proof $badSmoke $canonical $record.candidate $PythonCliRepository '123' ('e'*40) cli ('f'*40) macOS } "Missing or unsafe native smoke proof must fail: $field"
 }
-# An otherwise green PR run is still not a canonical dev-push producer.
-function Invoke-PythonGh([string[]]$Arguments) {
-    if ($Arguments[-1] -notlike '*actions/runs/*') { throw 'A PR source must be rejected before any further lookup.' }
-    @{repository=@{full_name='cwru-non-academic/WSSCore'};path='.github/workflows/artifacts.yml';head_sha=$record.candidate.commit;event='pull_request';status='completed';conclusion='success'} | ConvertTo-Json -Depth 5
-}
-Reject { Assert-PythonProducer $record.candidate } 'Green PR artifacts remain ineligible for automatic promotion.'
+# Exact run/event rejection, including green PR artifacts, is exercised at the
+# shared Node transport boundary by hosted preflight.test.mjs. This fixture owns
+# the language-specific macOS inventory and native smoke proof checks above.
 Write-Output "PASS: $checks macOS receiver inventory/proof rejection checks; no native activation is claimed by these fixtures."
