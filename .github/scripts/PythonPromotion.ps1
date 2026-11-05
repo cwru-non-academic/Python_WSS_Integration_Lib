@@ -186,9 +186,9 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     if ($Role -ceq 'wrapper') { $expectedRepository=$PythonWrapperRepository; $requiredName='Preflight behavioral tests'; $sourceField='wrapper_sha' }
     else { $application=Get-PythonApplication $Role; $expectedRepository=$application.repository; $requiredName=$application.acceptance; $sourceField=$application.source_field }
     if ($Repository -cne $expectedRepository) { throw 'Role/repository evidence mismatch.' }
-    $null=Wait-PythonRun $Repository $RunId $SourceSha 'wss-preflight.yml' 'workflow_dispatch'
+    $run=Wait-PythonRun $Repository $RunId $SourceSha 'wss-preflight.yml' 'workflow_dispatch'
     $contract = Get-PythonProducerContract $Candidate.commit
-    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
+    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
     foreach ($requiredName in @(Get-PythonEvidenceJobs $Role $contract)) {
         $isPlatform = $requiredName -cmatch '^(Preflight compatibility|CLI platform compatibility|ROS platform compatibility) \('
         $required=@($pages | ForEach-Object { $_.jobs } | Where-Object {
@@ -224,7 +224,7 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
             $platformRoot = Join-Path $Root "platform-$platform"
             $null=Invoke-PythonGh -Arguments @('run','download',$RunId,'--repo',$Repository,'--name',"python-preflight-platform-$platform",'--dir',$platformRoot)
             if ($platform -ceq 'macOS') {
-                $null=Assert-WssMacOSPair $platformRoot $Repository $RunId $SourceSha
+                $null=Assert-WssMacOSPair $platformRoot $Repository $RunId $SourceSha ([string]$run.run_attempt)
                 foreach ($architecture in @('x64','arm64')) {
                     $architectureRoot=Join-Path $platformRoot $architecture
                     $proof=Get-Content (Join-Path $architectureRoot 'platform.json') -Raw | ConvertFrom-Json

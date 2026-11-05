@@ -2,13 +2,14 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
-function Get-WssMacOSArchitectureProof([string]$Root,[ValidateSet('x64','arm64')][string]$Architecture,[string]$Repository,[string]$RunId,[string]$SourceSha) {
+function Get-WssMacOSArchitectureProof([string]$Root,[ValidateSet('x64','arm64')][string]$Architecture,[string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Attempt=$env:GITHUB_RUN_ATTEMPT) {
     $label=if($Architecture -ceq 'x64') {'Intel (x64)'} else {'Apple Silicon (arm64)'}
     try {
         foreach($name in @('outcome.json','platform.json','python-smoke.json','platform.trx')) {
             if(!(Test-Path -LiteralPath (Join-Path $Root $name) -PathType Leaf)) { throw "Missing $name" }
         }
         $outcome=Get-Content (Join-Path $Root 'outcome.json') -Raw | ConvertFrom-Json
+        Assert-WssCiEvidenceIdentity $outcome.ci $Repository $RunId $Attempt $SourceSha $Architecture
         $proof=Get-Content (Join-Path $Root 'platform.json') -Raw | ConvertFrom-Json
         $smokePath=Join-Path $Root 'python-smoke.json'
         $smoke=Get-Content $smokePath -Raw | ConvertFrom-Json
@@ -35,10 +36,10 @@ function Get-WssMacOSArchitectureProof([string]$Root,[ValidateSet('x64','arm64')
     } catch { throw "macOS $label`: $($_.Exception.Message)" }
 }
 
-function Get-WssMacOSPair([string]$Root,[string]$Repository,[string]$RunId,[string]$SourceSha) {
+function Get-WssMacOSPair([string]$Root,[string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Attempt=$env:GITHUB_RUN_ATTEMPT) {
     $results=@();$errors=@()
     foreach($architecture in @('x64','arm64')) {
-        try {$results+=Get-WssMacOSArchitectureProof (Join-Path $Root $architecture) $architecture $Repository $RunId $SourceSha}
+        try {$results+=Get-WssMacOSArchitectureProof (Join-Path $Root $architecture) $architecture $Repository $RunId $SourceSha $Attempt}
         catch {$errors+=$_.Exception.Message}
     }
     if($errors.Count) { throw ($errors -join '; ') }
@@ -60,15 +61,15 @@ function Get-WssMacOSPair([string]$Root,[string]$Repository,[string]$RunId,[stri
         }
         $architectures+=[ordered]@{architecture=$item.architecture;execution=$item.execution;coverage=$item.coverage;files=$files}
     }
-    [ordered]@{schema='wss-python-macos-pair/v1';repository=$Repository;run_id=$RunId;source_sha=$SourceSha;mode=$first.mode;wrapper_sha=$first.wrapper_sha;cli_sha=$first.cli_sha;fixture_sha=$first.fixture_sha;projection_sha256=$first.projection_sha256;universal_contract=$first.universal_contract;candidate=$candidate;architectures=$architectures}
+    [ordered]@{schema='wss-python-macos-pair/v1';repository=$Repository;run_id=$RunId;attempt=$Attempt;source_sha=$SourceSha;mode=$first.mode;wrapper_sha=$first.wrapper_sha;cli_sha=$first.cli_sha;fixture_sha=$first.fixture_sha;projection_sha256=$first.projection_sha256;universal_contract=$first.universal_contract;candidate=$candidate;architectures=$architectures}
 }
 
-function Assert-WssMacOSPair([string]$Root,[string]$Repository,[string]$RunId,[string]$SourceSha) {
+function Assert-WssMacOSPair([string]$Root,[string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Attempt=$env:GITHUB_RUN_ATTEMPT) {
     $expected=@('macos.json')+@('x64','arm64' | ForEach-Object {$arch=$_;@('outcome.json','platform.json','python-smoke.json','platform.trx') | ForEach-Object {"$arch/$_"}})
     $files=@(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {[IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/')})
     if(@(Compare-Object $expected $files -CaseSensitive).Count) {throw 'Unexpected/incomplete macOS aggregate artifact inventory'}
     $manifest=Get-Content (Join-Path $Root 'macos.json') -Raw | ConvertFrom-Json
-    $actual=Get-WssMacOSPair $Root $Repository $RunId $SourceSha
+    $actual=Get-WssMacOSPair $Root $Repository $RunId $SourceSha $Attempt
     if(($manifest | ConvertTo-Json -Depth 12 -Compress) -cne ($actual | ConvertTo-Json -Depth 12 -Compress)) { throw 'macOS aggregate manifest differs from exact architecture proofs/bytes' }
     $actual
 }
