@@ -40,11 +40,11 @@ Reject { Assert-PythonProjection $projected $new } 'Missing declared dylib must 
 Set-Content (Join-Path $mac 'extra.dll') 'not allowlisted'
 Reject { New-PythonProjection $inputRoot $root (Join-Path $temporary 'extra') $record.candidate } 'Arbitrary extra files remain forbidden.'
 $baseNames=@('Build and validate artifacts','Core conformance','Serial consumer (Windows)','Serial consumer (macOS)','Serial consumer (Linux)','BLE consumer (Windows)','BLE consumer (Linux)','Core consumer (Windows)','Core consumer (macOS)','Core consumer (Linux)','Start routine downstream validation')
-$baseJobs=@($baseNames | ForEach-Object { [pscustomobject]@{name=$_;conclusion='success'} })
+$baseJobs=@($baseNames | ForEach-Object { [pscustomobject]@{name=$_;status='completed';conclusion='success'} })
 Assert-PythonProducerJobs $baseJobs 'legacy-v1'; $checks++
 Reject { Assert-PythonProducerJobs $baseJobs 'macos-ble-v1' } 'Legacy producer gates cannot approve a declared macOS payload.'
-$macNames=@('Build macOS universal BLE bridge','BLE consumer (macOS arm64)','BLE consumer (macOS x86_64)')
-$allJobs=$baseJobs+@($macNames | ForEach-Object { [pscustomobject]@{name=$_;conclusion='success'} })
+$macNames=@('Build macOS universal BLE bridge','BLE consumer (macOS arm64)','BLE consumer (macOS x86_64)','BLE Consumer for Windows','BLE Consumer for Linux','BLE Consumer for Mac')
+$allJobs=$baseJobs+@($macNames | ForEach-Object { [pscustomobject]@{name=$_;status='completed';conclusion='success'} })
 Assert-PythonProducerJobs $allJobs 'macos-ble-v1'; $checks++
 foreach ($name in $macNames) {
     Reject { Assert-PythonProducerJobs @($allJobs | Where-Object name -CNE $name) 'macos-ble-v1' } "Missing required producer gate must fail: $name"

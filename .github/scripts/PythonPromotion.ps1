@@ -18,23 +18,20 @@ function Wait-PythonRun([string]$Repository,[string]$RunId,[string]$Sha,[string]
 function Assert-PythonProducer($Candidate) {
     Assert-PythonCandidate $Candidate
     $run=Wait-PythonRun $Candidate.repository $Candidate.run_id $Candidate.commit 'artifacts.yml' 'push'
+    if ($run.run_attempt -lt 1) { throw 'Exact producer attempt is required.' }
     if ($run.head_branch -cne 'dev' -or $run.head_repository.full_name -cne $Candidate.repository -or $Candidate.archive -cne 'WSS-Universal-ci.zip') { throw 'Automatic Python propagation requires the canonical Core dev push archive.' }
     $compare=Invoke-PythonGh -Arguments @('api',"repos/$($Candidate.repository)/compare/$($Candidate.commit)...dev") | ConvertFrom-Json
     if ($compare.status -cnotin @('ahead','identical')) { throw 'Producer commit is not contained in Core dev.' }
-    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$($Candidate.repository)/actions/runs/$($Candidate.run_id)/jobs?per_page=100&filter=latest") | ConvertFrom-Json
+    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$($Candidate.repository)/actions/runs/$($Candidate.run_id)/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
     $jobs=@($pages | ForEach-Object { $_.jobs })
     Assert-PythonProducerJobs $jobs (Get-PythonProducerContract $Candidate.commit)
     $artifact=Invoke-PythonGh -Arguments @('api',"repos/$($Candidate.repository)/actions/artifacts/$($Candidate.artifact_id)") | ConvertFrom-Json
     if ($artifact.expired -or $artifact.name -cne 'universal-release-assets' -or [string]$artifact.workflow_run.id -cne [string]$Candidate.run_id -or $artifact.workflow_run.head_sha -cne $Candidate.commit) { throw 'Wrong/expired producer artifact.' }
 }
 function Assert-PythonProducerJobs($Jobs,[string]$Contract) {
-    $required = @('Build and validate artifacts','Core conformance','Serial consumer (Windows)','Serial consumer (macOS)','Serial consumer (Linux)','BLE consumer (Windows)','BLE consumer (Linux)','Core consumer (Windows)','Core consumer (macOS)','Core consumer (Linux)','Start routine downstream validation')
     $null = @(Get-WssUniversalFiles $Contract)
-    if ($Contract -ceq 'macos-ble-v1') { $required += @('Build macOS universal BLE bridge','BLE consumer (macOS arm64)','BLE consumer (macOS x86_64)') }
-    foreach ($name in $required) {
-        $matching=@($Jobs | Where-Object { $_.name -ceq $name })
-        if ($matching.Count -ne 1 -or $matching[0].conclusion -cne 'success') { throw "Required Core producer job missing/skipped/failed: $name" }
-    }
+    . "$PSScriptRoot/wss-ci/Producer.ps1"
+    Assert-WssCiProducerJobs $Jobs $Contract
 }
 function Get-PythonHead([string]$Repository) {
     $branch=Invoke-PythonGh -Arguments @('api',"repos/$Repository/branches/dev") | ConvertFrom-Json
