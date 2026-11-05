@@ -1,7 +1,0 @@
-{
-    "python.analysis.extraPaths": [
-        "./configs",
-        r"C:\Python",
-        "C:/Python/Python314/python.exe"
-    ]
-}

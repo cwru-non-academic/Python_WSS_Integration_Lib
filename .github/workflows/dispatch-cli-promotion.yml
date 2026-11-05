@@ -63,7 +63,6 @@ jobs:
           permission-actions: read
           permission-pull-requests: read
       - uses: actions/setup-node@v4
-        if: github.event_name == 'workflow_dispatch'
         with:
           node-version: '24'
       - uses: actions/checkout@v4
@@ -113,7 +112,6 @@ jobs:
           permission-actions: read
           permission-pull-requests: read
       - uses: actions/setup-node@v4
-        if: github.event_name == 'workflow_dispatch'
         with:
           node-version: '24'
       - uses: actions/checkout@v4
@@ -139,6 +137,13 @@ jobs:
           GH_TOKEN: ${{ steps.read.outputs.token }}
           APPLICATION_ROLE: ${{ matrix.application.role }}
         run: ./.github/scripts/Dispatch-PythonCli.ps1 -Role $env:APPLICATION_ROLE -EventPath "$env:RUNNER_TEMP/python-stage-gate/verified-event.json" -WorkRoot "$env:RUNNER_TEMP/python-dispatch" -ValidateOnly
+      - name: Retain dispatch intent before write credentials
+        if: steps.validate.outputs.dispatch_needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.validate.outputs.intent_name }}
+          path: ${{ runner.temp }}/python-dispatch/${{ matrix.application.role }}-dispatch.json
+          if-no-files-found: error
       - name: Recheck the integration barrier immediately before application writes
         if: github.event_name == 'workflow_dispatch' && steps.validate.outputs.dispatch_needed == 'true'
         shell: pwsh
@@ -158,13 +163,15 @@ jobs:
           owner: cwru-non-academic
           repositories: ${{ matrix.application.repository }}
           permission-actions: write
-      - name: Dispatch once; inspect any uncertain outcome before retry
+      - name: Dispatch through common durable-intent sender
         if: steps.validate.outputs.dispatch_needed == 'true'
         shell: pwsh
         env:
-          GH_TOKEN: ${{ steps.dispatch.outputs.token }}
-          APPLICATION_REPOSITORY: ${{ matrix.application.repository }}
+          WSS_READ_TOKEN: ${{ steps.read.outputs.token }}
+          WSS_DISPATCH_TOKEN: ${{ steps.dispatch.outputs.token }}
           APPLICATION_ROLE: ${{ matrix.application.role }}
         run: |
-          gh api --method POST "repos/cwru-non-academic/$env:APPLICATION_REPOSITORY/actions/workflows/promote-integration.yml/dispatches" --input "$env:RUNNER_TEMP/python-dispatch/$env:APPLICATION_ROLE-dispatch.json"
-          if ($LASTEXITCODE -ne 0) { throw 'Dispatch failed or uncertain; inspect before replay.' }
+          . ./.github/scripts/wss-ci/DispatchProof.ps1
+          $root="$env:RUNNER_TEMP/python-dispatch"
+          $context=Get-Content (Join-Path $root 'dispatch-sources.json') -Raw|ConvertFrom-Json -AsHashtable
+          Send-WssCiApplicationDispatch $context.repository (Join-Path $root "$env:APPLICATION_ROLE-dispatch.json") $env:WSS_READ_TOKEN $env:WSS_DISPATCH_TOKEN $context.owner $context.name $context.sources

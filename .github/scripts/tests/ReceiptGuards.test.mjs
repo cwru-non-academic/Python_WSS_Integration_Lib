@@ -15,8 +15,8 @@ test('receipt transport cannot dispatch, publish or write through gh',()=>{
 test('required checks, parent pins and coverage cannot be relaxed by plan metadata',()=>{
   for(const id of Object.keys(TARGETS)) {
     const t={id,...structuredClone(TARGETS[id]),branch:'dev'};
-    assert.equal(targetPolicy({manifest:{targets:[t]}},id).role,TARGETS[id].role);
-    t.jobs.pop();assert.throws(()=>targetPolicy({manifest:{targets:[t]}},id));
+    assert.equal(targetPolicy({channel:'dev',manifest:{channel:'dev',targets:[t],excluded:[]}},id).role,TARGETS[id].role);
+    t.jobs.pop();assert.throws(()=>targetPolicy({channel:'dev',manifest:{channel:'dev',targets:[t],excluded:[]}},id));
   }
 });
 test('normal proof is actual postmerge CI and latest failure blocks older success',()=>{

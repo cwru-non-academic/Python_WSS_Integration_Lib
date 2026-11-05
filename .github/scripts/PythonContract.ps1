@@ -25,16 +25,15 @@ function Get-PythonProjectionFiles($Record) {
 }
 function Get-PythonProducerContract([string]$Commit) {
     Assert-PythonSha $Commit
-    $content = Invoke-PythonGh @('api',"repos/cwru-non-academic/WSSCore/contents/tools/ArtifactBuild/manifests/universal.json?ref=$Commit") | ConvertFrom-Json
+    $content = Invoke-PythonGh -Arguments @('api',"repos/cwru-non-academic/WSSCore/contents/tools/ArtifactBuild/manifests/universal.json?ref=$Commit") | ConvertFrom-Json
     if ($content.encoding -cne 'base64') { throw 'Unexpected producer manifest encoding.' }
     $manifest = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($content.content)) | ConvertFrom-Json
     Get-WssUniversalContract @($manifest.files)
 }
 
 function Invoke-PythonGh([string[]]$Arguments) {
-    $response = & gh @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "GitHub operation failed: $($Arguments[0..([Math]::Min(1,$Arguments.Count-1))] -join ' ')" }
-    $response
+    . "$PSScriptRoot/wss-ci/Process.ps1"
+    Invoke-WssCiProcess -Executable gh -Arguments $Arguments -FailureMessage 'GitHub operation failed'
 }
 function Invoke-PythonGit([string]$Root, [string[]]$Arguments) {
     $response = & git -C $Root @Arguments

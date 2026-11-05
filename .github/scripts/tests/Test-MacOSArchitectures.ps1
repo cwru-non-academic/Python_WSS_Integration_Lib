@@ -1,4 +1,6 @@
 . "$PSScriptRoot/../MacOSConsumerEvidence.ps1"
+$savedAttempt=$env:GITHUB_RUN_ATTEMPT
+$env:GITHUB_RUN_ATTEMPT='2'
 $repository='cwru-non-academic/CLI_Python_WSS_Application';$runId='100';$sourceSha='c'*40
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('wss-macos-policy-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary | Out-Null
@@ -7,7 +9,7 @@ function New-PairFixture([string]$Name) {
     $root=Join-Path $temporary $Name;New-Item -ItemType Directory -Path $root | Out-Null
     foreach($arch in @('x64','arm64')) {
         $folder=Join-Path $root $arch;New-Item -ItemType Directory -Path $folder | Out-Null
-        @{schema='wss-macos-worker/v1';architecture=$arch;conclusion='success';repository=$repository;run_id=$runId;source_sha=$sourceSha} | ConvertTo-Json | Set-Content (Join-Path $folder 'outcome.json')
+        @{schema='wss-macos-worker/v1';ci=(New-WssCiEvidenceIdentity $repository $runId '2' $sourceSha $arch);architecture=$arch;conclusion='success';repository=$repository;run_id=$runId;source_sha=$sourceSha} | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $folder 'outcome.json')
         @{schema='wss-python-smoke/v2';os='darwin';architecture=$arch;dotnet_process_architecture=$arch;os_architecture=$arch;runner_architecture=$arch;translated=$false;execution='native';physical_io=$false;macos_ble_declared=$true;contract='macos-ble-v1';cli_routing=$true;ble='passed: policy fixture, not native proof'} | ConvertTo-Json | Set-Content (Join-Path $folder 'python-smoke.json')
         '<TestRun><Results><UnitTestResult testName="FacadeLoadsCurrentPlatformBackendAndDependencies" outcome="Passed" /></Results></TestRun>' | Set-Content (Join-Path $folder 'platform.trx')
         @{schema='wss-python-platform/v2';run_repository=$repository;run_id=$runId;run_sha=$sourceSha;os='macOS 15 policy fixture';architecture=$arch;execution='native';mode='candidate';wrapper_sha=('a'*40);cli_sha=$sourceSha;fixture_sha=('b'*40);projection_sha256=('d'*64);universal_contract='macos-ble-v1';candidate=@{repository='cwru-non-academic/WSSCore';commit=('e'*40);run_id='1';artifact_id='2';archive='WSS-Universal-ci.zip';sha256=('f'*64)};ble='passed: policy fixture, not native proof';python_smoke_sha256=(Get-FileHash (Join-Path $folder 'python-smoke.json')).Hash.ToLowerInvariant();platform_trx_sha256=(Get-FileHash (Join-Path $folder 'platform.trx')).Hash.ToLowerInvariant()} | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $folder 'platform.json')
@@ -41,6 +43,10 @@ foreach($result in @('failure','skipped','cancelled')) {
     $root=New-PairFixture $result;Change-Json (Join-Path $root 'arm64/outcome.json') conclusion $result;Reject-Pair $root $result 'arm64'
 }
 $root=New-PairFixture 'wrong-run';Change-Json (Join-Path $root 'arm64/outcome.json') run_id '101';Reject-Pair $root 'another run' 'arm64'
+$root=New-PairFixture 'prior-attempt'
+$outcome=Get-Content (Join-Path $root 'arm64/outcome.json') -Raw|ConvertFrom-Json
+$outcome.ci.attempt='1';$outcome|ConvertTo-Json -Depth 6|Set-Content (Join-Path $root 'arm64/outcome.json')
+Reject-Pair $root 'another workflow attempt' 'arm64'
 $root=New-PairFixture 'missing';Remove-Item -LiteralPath (Join-Path $root 'arm64/platform.json');Reject-Pair $root 'missing architecture evidence'
 $root=New-PairFixture 'skip-native'
 '<TestRun><Results><UnitTestResult testName="FacadeLoadsCurrentPlatformBackendAndDependencies" outcome="NotExecuted" /></Results></TestRun>' | Set-Content (Join-Path $root 'arm64/platform.trx')
@@ -66,3 +72,4 @@ $proof.candidate.sha256='0'*64;$proof | ConvertTo-Json -Depth 8 | Set-Content (J
 Reject-Pair $root 'different architecture candidate' 'arm64'
 Write-Output "PASS: $checks macOS pair policy checks. These fixtures do not execute native BLE or establish architecture coverage."
 # Keep the small fixture directory for diagnostic inspection; it contains no executable artifacts.
+$env:GITHUB_RUN_ATTEMPT=$savedAttempt
