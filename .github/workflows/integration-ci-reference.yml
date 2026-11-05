@@ -1,0 +1,29 @@
+name: Integration CI reference contracts
+on:
+  pull_request:
+    paths: ['.github/scripts/wss-ci/**', '.github/workflows/integration-ci-reference.yml']
+  push:
+    branches: [dev, main]
+    paths: ['.github/scripts/wss-ci/**', '.github/workflows/integration-ci-reference.yml']
+permissions:
+  contents: read
+jobs:
+  contracts:
+    name: Integration reference contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test .github/scripts/wss-ci/tests/*.test.mjs
+      - shell: pwsh
+        run: |
+          ./.github/scripts/wss-ci/tests/Process.Tests.ps1
+          ./.github/scripts/wss-ci/tests/Evidence.Tests.ps1
