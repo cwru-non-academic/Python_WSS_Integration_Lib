@@ -5,7 +5,7 @@ function Wait-PythonRun([string]$Repository,[string]$RunId,[string]$Sha,[string]
     Assert-PythonSha $Sha
     $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
-        $run=Invoke-PythonGh @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
+        $run=Invoke-PythonGh -Arguments @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
         if ($run.repository.full_name -cne $Repository -or $run.path -cne ".github/workflows/$Workflow" -or $run.head_sha -cne $Sha -or $run.event -cne $Event) { throw 'Workflow run identity mismatch.' }
         if ($run.status -ceq 'completed') {
             if ($run.conclusion -cne 'success') { throw 'Required workflow did not succeed; never substitute another green run.' }
@@ -19,12 +19,12 @@ function Assert-PythonProducer($Candidate) {
     Assert-PythonCandidate $Candidate
     $run=Wait-PythonRun $Candidate.repository $Candidate.run_id $Candidate.commit 'artifacts.yml' 'push'
     if ($run.head_branch -cne 'dev' -or $run.head_repository.full_name -cne $Candidate.repository -or $Candidate.archive -cne 'WSS-Universal-ci.zip') { throw 'Automatic Python propagation requires the canonical Core dev push archive.' }
-    $compare=Invoke-PythonGh @('api',"repos/$($Candidate.repository)/compare/$($Candidate.commit)...dev") | ConvertFrom-Json
+    $compare=Invoke-PythonGh -Arguments @('api',"repos/$($Candidate.repository)/compare/$($Candidate.commit)...dev") | ConvertFrom-Json
     if ($compare.status -cnotin @('ahead','identical')) { throw 'Producer commit is not contained in Core dev.' }
-    $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$($Candidate.repository)/actions/runs/$($Candidate.run_id)/jobs?per_page=100&filter=latest") | ConvertFrom-Json
+    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$($Candidate.repository)/actions/runs/$($Candidate.run_id)/jobs?per_page=100&filter=latest") | ConvertFrom-Json
     $jobs=@($pages | ForEach-Object { $_.jobs })
     Assert-PythonProducerJobs $jobs (Get-PythonProducerContract $Candidate.commit)
-    $artifact=Invoke-PythonGh @('api',"repos/$($Candidate.repository)/actions/artifacts/$($Candidate.artifact_id)") | ConvertFrom-Json
+    $artifact=Invoke-PythonGh -Arguments @('api',"repos/$($Candidate.repository)/actions/artifacts/$($Candidate.artifact_id)") | ConvertFrom-Json
     if ($artifact.expired -or $artifact.name -cne 'universal-release-assets' -or [string]$artifact.workflow_run.id -cne [string]$Candidate.run_id -or $artifact.workflow_run.head_sha -cne $Candidate.commit) { throw 'Wrong/expired producer artifact.' }
 }
 function Assert-PythonProducerJobs($Jobs,[string]$Contract) {
@@ -37,7 +37,7 @@ function Assert-PythonProducerJobs($Jobs,[string]$Contract) {
     }
 }
 function Get-PythonHead([string]$Repository) {
-    $branch=Invoke-PythonGh @('api',"repos/$Repository/branches/dev") | ConvertFrom-Json
+    $branch=Invoke-PythonGh -Arguments @('api',"repos/$Repository/branches/dev") | ConvertFrom-Json
     Assert-PythonSha $branch.commit.sha
     $branch.commit.sha
 }
@@ -49,7 +49,7 @@ function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSh
     $correlation="wss-$($Candidate.run_id)-$($Candidate.artifact_id)-$WrapperSha-$ApplicationSha"
     $title="WSS preflight $($Candidate.run_id) / $correlation"
     function Find-Run {
-        $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
+        $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
         $runs=@($pages | ForEach-Object { $_.workflow_runs } | Where-Object { $_.display_title -ceq $title })
         if ($runs.Count -gt 1) { throw 'Ambiguous correlated preflight; no run selection or redispatch.' }
         if ($runs.Count -eq 1) { return $runs[0] }
@@ -191,7 +191,7 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     if ($Repository -cne $expectedRepository) { throw 'Role/repository evidence mismatch.' }
     $null=Wait-PythonRun $Repository $RunId $SourceSha 'wss-preflight.yml' 'workflow_dispatch'
     $contract = Get-PythonProducerContract $Candidate.commit
-    $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
+    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
     foreach ($requiredName in @(Get-PythonEvidenceJobs $Role $contract)) {
         $isPlatform = $requiredName -cmatch '^(Preflight compatibility|CLI platform compatibility|ROS platform compatibility) \('
         $required=@($pages | ForEach-Object { $_.jobs } | Where-Object {
@@ -200,7 +200,7 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
         if ($required.Count -ne 1 -or $required[0].conclusion -cne 'success') { throw "Required candidate job missing/skipped/failed: $requiredName" }
     }
     if (Test-Path -LiteralPath $Root) { throw 'Evidence download destination must be new.' }
-    $null=Invoke-PythonGh @('run','download',$RunId,'--repo',$Repository,'--name','python-preflight-evidence','--dir',$Root)
+    $null=Invoke-PythonGh -Arguments @('run','download',$RunId,'--repo',$Repository,'--name','python-preflight-evidence','--dir',$Root)
     $files=@(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object { [IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/') })
     if (@(Compare-Object @(Get-PythonEvidenceFiles $Role) $files -CaseSensitive).Count -ne 0) { throw 'Unexpected/incomplete preflight artifact.' }
     $e=Get-Content -LiteralPath (Join-Path $Root 'evidence.json') -Raw | ConvertFrom-Json
@@ -225,7 +225,7 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     if ($contract -ceq 'macos-ble-v1') {
         foreach ($platform in @('Windows','Ubuntu','macOS')) {
             $platformRoot = Join-Path $Root "platform-$platform"
-            $null=Invoke-PythonGh @('run','download',$RunId,'--repo',$Repository,'--name',"python-preflight-platform-$platform",'--dir',$platformRoot)
+            $null=Invoke-PythonGh -Arguments @('run','download',$RunId,'--repo',$Repository,'--name',"python-preflight-platform-$platform",'--dir',$platformRoot)
             if ($platform -ceq 'macOS') {
                 $null=Assert-WssMacOSPair $platformRoot $Repository $RunId $SourceSha
                 foreach ($architecture in @('x64','arm64')) {
@@ -308,7 +308,7 @@ function Assert-PythonRemoteProjection([string]$Sha,$Record) {
     Assert-PythonSha $Sha
     $projectionFiles = @(Get-PythonProjectionFiles $Record)
     if ($Record.schema -cne 'wss-python-projection/v1' -or (Get-PythonProjectionDigest $Record.files) -cne $Record.projection_sha256) { throw 'Invalid merged projection inventory/digest.' }
-    $tree=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/git/trees/${Sha}?recursive=1") | ConvertFrom-Json
+    $tree=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/git/trees/${Sha}?recursive=1") | ConvertFrom-Json
     if ($tree.truncated) { throw 'Merged wrapper tree response is truncated.' }
     $actual=@($tree.tree | Where-Object { $_.type -ceq 'blob' -and $_.path.StartsWith($PythonPluginPath+'/',[StringComparison]::Ordinal) } | ForEach-Object { $_.path })
     $expected=@($projectionFiles | ForEach-Object { "$PythonPluginPath/$_" })
@@ -317,7 +317,7 @@ function Assert-PythonRemoteProjection([string]$Sha,$Record) {
         $path="$PythonPluginPath/$($file.source)"
         $entries=@($tree.tree | Where-Object { $_.path -ceq $path -and $_.type -ceq 'blob' })
         if ($entries.Count -ne 1) { throw 'Merged payload path missing/ambiguous.' }
-        $blob=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/git/blobs/$($entries[0].sha)") | ConvertFrom-Json
+        $blob=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/git/blobs/$($entries[0].sha)") | ConvertFrom-Json
         if ($blob.encoding -cne 'base64') { throw 'Unsupported blob encoding.' }
         $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Convert]::FromBase64String($blob.content))).ToLowerInvariant()
         if ($hash -cne $file.sha256) { throw "Actual merged payload differs: $path" }
@@ -352,24 +352,24 @@ function Get-PythonFinalHeadWrapperRuns($Pages,$Pr,$CommitPullRequests) {
 function Assert-PythonMergedWrapper([string]$Sha,[string]$PrNumber,$Approval) {
     Assert-PythonSha $Sha
     if ($PrNumber -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid wrapper PR number.' }
-    $pr=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/pulls/$PrNumber") | ConvertFrom-Json
+    $pr=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/pulls/$PrNumber") | ConvertFrom-Json
     if (!$pr.merged -or $pr.merge_commit_sha -cne $Sha -or $pr.base.ref -cne 'dev' -or $pr.base.repo.full_name -cne $PythonWrapperRepository -or
         $pr.head.repo.full_name -cne $PythonWrapperRepository -or $pr.user.type -cne 'Bot') { throw 'Wrapper must be the actual reviewed same-repository bot PR merge into dev.' }
     if ($pr.head.ref -cne "automation/python-wss-$($Approval.candidate.run_id)-$($Approval.candidate.sha256)") { throw 'Merged wrapper PR is not the canonical candidate branch.' }
-    $compare=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/compare/${Sha}...dev") | ConvertFrom-Json
+    $compare=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/compare/${Sha}...dev") | ConvertFrom-Json
     if ($compare.status -cnotin @('ahead','identical')) { throw 'Wrapper merge is not contained in dev.' }
-    $delta=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/compare/$($Approval.wrapper.source_sha)...$Sha") | ConvertFrom-Json
+    $delta=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/compare/$($Approval.wrapper.source_sha)...$Sha") | ConvertFrom-Json
     if ($delta.total_commits -lt 1 -or $delta.files.Count -ge 300) { throw 'Wrapper comparison empty or potentially truncated.' }
     Assert-PythonDiff @($delta.files.filename) (Get-PythonAllowedWrapperPaths)
-    $pages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/actions/workflows/wss-compatibility.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=100") | ConvertFrom-Json
-    $commitPages=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/commits/$($pr.head.sha)/pulls?per_page=100") | ConvertFrom-Json
+    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/actions/workflows/wss-compatibility.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=100") | ConvertFrom-Json
+    $commitPages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/commits/$($pr.head.sha)/pulls?per_page=100") | ConvertFrom-Json
     $commitPrs=@($commitPages | ForEach-Object { $_ })
     $runs=@(Get-PythonFinalHeadWrapperRuns $pages $pr $commitPrs | Sort-Object { [long]$_.id } -Descending)
     if ($runs.Count -eq 0 -or $runs[0].status -cne 'completed' -or $runs[0].conclusion -cne 'success') { throw 'Latest final-head normal wrapper PR CI has not succeeded.' }
-    $jobs=Invoke-PythonGh @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/actions/runs/$($runs[0].id)/jobs?per_page=100") | ConvertFrom-Json
+    $jobs=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/actions/runs/$($runs[0].id)/jobs?per_page=100") | ConvertFrom-Json
     $required=@($jobs | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq 'Integration behavioral tests' })
     if ($required.Count -ne 1 -or $required[0].conclusion -cne 'success') { throw 'Normal committed-state acceptance missing/skipped/failed.' }
-    $content=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/contents/.github/python-candidate.json?ref=$Sha") | ConvertFrom-Json
+    $content=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/contents/.github/python-candidate.json?ref=$Sha") | ConvertFrom-Json
     $record=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($content.content)) | ConvertFrom-Json
     Assert-PythonSameCandidate $record.candidate $Approval.candidate
     if ($record.projection_sha256 -cne $Approval.projection_sha256) { throw 'Merged projection differs from preflights.' }

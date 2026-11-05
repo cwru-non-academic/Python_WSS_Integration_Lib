@@ -1,3 +1,4 @@
+. "$PSScriptRoot/wss-ci/Evidence.ps1"
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
@@ -11,15 +12,13 @@ function Get-WssMacOSArchitectureProof([string]$Root,[ValidateSet('x64','arm64')
         $proof=Get-Content (Join-Path $Root 'platform.json') -Raw | ConvertFrom-Json
         $smokePath=Join-Path $Root 'python-smoke.json'
         $smoke=Get-Content $smokePath -Raw | ConvertFrom-Json
-        if($outcome.schema -cne 'wss-macos-worker/v1' -or $outcome.architecture -cne $Architecture -or $outcome.conclusion -cne 'success' -or
-            $outcome.repository -cne $Repository -or [string]$outcome.run_id -cne $RunId -or $outcome.source_sha -cne $SourceSha) { throw 'Worker failed, skipped, cancelled or belongs to another source/run' }
+        Assert-WssCiEvidenceFields $outcome @{schema='wss-macos-worker/v1';architecture=$Architecture;conclusion='success';repository=$Repository;run_id=$RunId;source_sha=$SourceSha}
         if($proof.schema -cne 'wss-python-platform/v2' -or $proof.run_repository -cne $Repository -or [string]$proof.run_id -cne $RunId -or $proof.run_sha -cne $SourceSha -or
             $proof.os -cnotlike 'macOS *' -or $proof.architecture -cne $Architecture -or $proof.execution -cne 'native' -or
             $smoke.schema -cne 'wss-python-smoke/v2' -or $smoke.os -cne 'darwin' -or $smoke.architecture -cne $Architecture -or
             $smoke.dotnet_process_architecture -cne $Architecture -or $smoke.os_architecture -cne $Architecture -or
             $smoke.runner_architecture -cne $Architecture -or $smoke.translated -cne $false -or $smoke.execution -cne 'native' -or $smoke.physical_io -cne $false) { throw 'Native Python/CLR/OS/runner architecture identity mismatch or emulated execution' }
-        if((Get-FileHash $smokePath).Hash.ToLowerInvariant() -cne $proof.python_smoke_sha256 -or
-            (Get-FileHash (Join-Path $Root 'platform.trx')).Hash.ToLowerInvariant() -cne $proof.platform_trx_sha256) { throw 'Smoke/TRX content hash mismatch' }
+        Assert-WssCiEvidenceFiles $Root @{'python-smoke.json'=$proof.python_smoke_sha256;'platform.trx'=$proof.platform_trx_sha256}
         if($proof.universal_contract -ceq 'macos-ble-v1') {
             if($smoke.macos_ble_declared -cne $true -or !$smoke.ble.StartsWith('passed:',[StringComparison]::Ordinal) -or !$proof.ble.StartsWith('passed:',[StringComparison]::Ordinal)) { throw 'Declared BLE native activation did not pass' }
             $settings=[Xml.XmlReaderSettings]::new();$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
