@@ -23,7 +23,7 @@ if ($resume) {
     if ($LASTEXITCODE -ne 0) { throw 'Core integration barrier did not validate.' }
     $barrier=($barrierJson -join "`n") | ConvertFrom-Json
     $accepted=$barrier.integrations.python
-    if ($barrier.schema -cne 'wss-integration-barrier/v1' -or $accepted.repository -cne $PythonWrapperRepository -or [string]$barrier.candidate.run_id -cne $ProducerRunId) { throw 'Wrong barrier/receiver binding.' }
+    if ($barrier.schema -cnotin @('wss-integration-barrier/v1','wss-integration-barrier/v2') -or $accepted.repository -cne $PythonWrapperRepository -or [string]$barrier.candidate.run_id -cne $ProducerRunId) { throw 'Wrong barrier/receiver binding.' }
     Assert-PythonSha $accepted.head_sha
     if ([string]$accepted.pr_number -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid barrier wrapper PR.' }
     $pr=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/pulls/$($accepted.pr_number)") | ConvertFrom-Json
@@ -49,4 +49,4 @@ $apps=@($roles | ForEach-Object { $app=Get-PythonApplication $_; @{role=$_;label
 $allowed=!$staged -or $resume
 "dispatch_allowed=$($allowed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 $event | ConvertTo-Json -Depth 100 | Set-Content (Join-Path $WorkRoot 'verified-event.json')
-if (!$allowed) { Write-Output 'Staged producer: waiting for the complete Core integration barrier; no application write token.' }
+if (!$allowed) { Write-Output 'Staged producer: waiting for Core authorization of this integration and its exact committed CI; no application write token.' }
