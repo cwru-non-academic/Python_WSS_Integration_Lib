@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {runReceipt,readOnlyGh,targetPolicy} from '../receipt.mjs';
 import {CORE,CORE_JOBS,digest,bytesDigest} from '../verify.mjs';
@@ -14,7 +14,7 @@ function fixture() {
   git('init');mkdirSync(join(root,'.github/scripts'),{recursive:true});writeFileSync(join(root,'.github/scripts/proof.ps1'),'# trusted adapter\n');writeFileSync(join(root,'.github/python-ci.json'),'{}\n');
   git('add','.');git('-c','user.name=CI','-c','user.email=ci@example.invalid','commit','-m','fixture');
   const head=git('rev-parse','HEAD'),scripts=git('rev-parse','HEAD:.github/scripts'),config=git('rev-parse','HEAD:.github/python-ci.json');
-  const manifest=JSON.parse(readFileSync(new URL('../targets.dev.json',import.meta.url)));
+  const manifest=JSON.parse(readFileSync(resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core','tools/release/targets.dev.json')));
   const id='python-wrapper',t=manifest.targets.find(t=>t.id===id);
   const zip=Buffer.from('canonical archive'),candidate={repository:CORE,commit:sha(1),run_id:'1',artifact_id:'2',archive:'WSS-Universal-ci.zip',sha256:bytesDigest(zip)};
   const body={schema:'wss-propagation-plan/v1',channel:'dev',candidate,manifest,manifest_sha256:digest(manifest),target_snapshots:Object.fromEntries(manifest.targets.map(target=>[target.id,{head_sha:sha(2),trusted:Object.fromEntries(target.trusted_paths.map(path=>[path,target.id===id&&path==='.github/scripts'?scripts:target.id===id&&path==='.github/python-ci.json'?config:sha(3)]))}]))};

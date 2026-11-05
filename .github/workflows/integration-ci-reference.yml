@@ -22,7 +22,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: 11ad9dda62ce5566367d1f46b4b23be07ab911dd
+          path: .ci-reference/Core
+          persist-credentials: false
       - run: node --test .github/scripts/wss-ci/tests/*.test.mjs
+        env:
+          WSS_CORE_REFERENCE: ${{ github.workspace }}/.ci-reference/Core
       - shell: pwsh
         run: |
           ./.github/scripts/wss-ci/tests/Process.Tests.ps1
