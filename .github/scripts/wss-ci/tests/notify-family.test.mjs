@@ -8,7 +8,7 @@ function fixture(family='python'){
   const profile=profiles[family+'-wrapper'],t=profile.target,repo=t.repository;
   const candidate={repository:core,commit:sha(1),run_id:'1',artifact_id:'2',archive:'WSS-Universal-ci.zip',sha256:'a'.repeat(64)};
   const pr={number:3,merged:true,state:'closed',merged_at:'2026-01-01T00:00:00Z',merge_commit_sha:sha(2),user:{type:'Bot'},merged_by:{type:'User'},head:{repo:{full_name:repo}},base:{ref:'dev',repo:{full_name:repo}}};
-  const p={candidate:structuredClone(candidate),manifest:{targets:Object.values(profiles).map(p=>p.target)},target_snapshots:{[t.id]:{trusted:Object.fromEntries(t.trusted_paths.map(path=>[path,sha(4)]))}}};
+  const p={channel:'dev',candidate:structuredClone(candidate),manifest:{channel:'dev',excluded:[],targets:Object.values(profiles).map(p=>p.target)},target_snapshots:{[t.id]:{trusted:Object.fromEntries(t.trusted_paths.map(path=>[path,sha(4)]))}}};
   const stage={schema:'wss-dev-stage/v1',application_fanout:'per-integration',libraries:[{id:family,...targets[family]}]};
   const run={id:4,repository:{full_name:repo},head_repository:{full_name:repo},head_sha:sha(2),head_branch:'dev',path:t.workflow,event:'workflow_dispatch',created_at:'2026-01-01T00:01:00Z',status:'completed',conclusion:'success'};
   const context={repository:repo,eventName:'pull_request_target',event:{pull_request:{number:3}},sourceSha:sha(2),workflowRef:`${repo}/.github/workflows/notify-core-stage.yml@refs/heads/dev`};
