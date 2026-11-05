@@ -1,5 +1,6 @@
 name: Integration CI reference contracts
 on:
+  workflow_dispatch:
   pull_request:
     paths: ['.github/scripts/wss-ci/**', '.github/workflows/integration-ci-reference.yml']
   push:

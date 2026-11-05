@@ -11,11 +11,19 @@ function fixture(family='python'){
   const p={channel:'dev',candidate:structuredClone(candidate),manifest:{channel:'dev',excluded:[],targets:Object.values(profiles).map(p=>p.target)},target_snapshots:{[t.id]:{trusted:Object.fromEntries(t.trusted_paths.map(path=>[path,sha(4)]))}}};
   const stage={schema:'wss-dev-stage/v1',application_fanout:'per-integration',libraries:[{id:family,...targets[family]}]};
   const run={id:4,repository:{full_name:repo},head_repository:{full_name:repo},head_sha:sha(2),head_branch:'dev',path:t.workflow,event:'workflow_dispatch',created_at:'2026-01-01T00:01:00Z',status:'completed',conclusion:'success'};
-  const context={repository:repo,eventName:'pull_request_target',event:{pull_request:{number:3}},sourceSha:sha(2),workflowRef:`${repo}/.github/workflows/notify-core-stage.yml@refs/heads/dev`};
+  const context={repository:repo,eventName:'pull_request_target',event:{pull_request:{number:3}},sourceSha:sha(3),workflowRef:`${repo}/.github/workflows/notify-core-stage.yml@refs/heads/main`};
   const g={head:(r,b='dev')=>r===core?candidate.commit:b==='main'?sha(3):sha(2),object:()=>({sha:sha(4)}),pages:()=>[pr],get:path=>path.endsWith('/pulls/3')?pr:{type:'file',encoding:'base64',content:Buffer.from(JSON.stringify(path.includes('dev-propagation.json')?stage:{candidate})).toString('base64')},run:r=>r===core?{repository:{full_name:core},head_repository:{full_name:core},path:'.github/workflows/artifacts.yml',event:'push',head_branch:'dev',head_sha:candidate.commit,status:'completed',conclusion:'success'}:run};
   return {g,context,pr,p,stage,run,loadFrozenPlan:()=>p};
 }
 for(const family of Object.keys(targets))test(`${family} uses one wake-up implementation after its own actual merge`,()=>{const f=fixture(family);assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);});
+
+test('merge notification executes frozen main code and independently validates the merged dev payload',()=>{
+  const f=fixture();assert.notEqual(f.context.sourceSha,f.pr.merge_commit_sha);
+  assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);
+  for(const mutate of [x=>x.context.sourceSha=x.pr.merge_commit_sha,x=>x.context.workflowRef=x.context.workflowRef.replace('/main','/dev'),x=>x.context.sourceSha=sha(9)]){
+    const invalid=fixture();mutate(invalid);assert.throws(()=>prepareFamilyWakeup(invalid.g,invalid.context,invalid),/current trusted main/);
+  }
+});
 test('successful postmerge completion wakes its family from trusted main',()=>{const f=fixture();f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}},sourceSha:sha(3),workflowRef:f.context.workflowRef.replace('/dev','/main')};assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);f.run.conclusion='failure';assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/successful committed/);});
 test('ordinary source CI does not request coordinator credentials',()=>{const f=fixture();f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}},sourceSha:sha(3),workflowRef:f.context.workflowRef.replace('/dev','/main')};f.pr.user.type='User';assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,false);});
 test('unmerged, foreign, stale or bot-merged changes cannot request coordinator credentials',()=>{
