@@ -1,3 +1,4 @@
+import {selectNormalRun} from './wss-ci/normal-ci.mjs';
 export const WRAPPER='cwru-non-academic/Python_WSS_Integration_Lib';
 export const CONTRACT_SHA='be8546ca46256696bb366925b0094023d7cefc2c';
 export const RECEIPT_WORKFLOW='.github/workflows/release-receipt.yml';
@@ -30,12 +31,7 @@ export function runIdentity(r,repo,workflow,sha,event) {
     r.head_sha===sha && r.head_branch==='dev' && r.event===event,'Run source/repository/workflow/channel mismatch');
 }
 export function normalRun(runs,t,pr) {
-  const eligible=runs.filter(r=>['push','workflow_dispatch'].includes(r.event) && r.head_sha===pr.merge_commit_sha &&
-    r.head_branch==='dev' && r.repository?.full_name===t.repository && r.head_repository?.full_name===t.repository && r.path===t.workflow &&
-    Date.parse(r.created_at)>=Date.parse(pr.merged_at)).sort((a,b)=>Number(b.id)-Number(a.id));
-  need(eligible.length>0 && eligible[0].status==='completed' && eligible[0].conclusion==='success','Latest actual-merge normal CI is missing/pending/failed');
-  need(/^[1-9][0-9]*$/.test(String(eligible[0].id)) && Number.isSafeInteger(eligible[0].run_attempt) && eligible[0].run_attempt>=1,'Normal CI run/attempt is invalid');
-  return eligible[0];
+  return selectNormalRun(runs,t,pr.merge_commit_sha,pr.merged_at);
 }
 export function changedHead(head,snapshot) {
   need(/^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(snapshot.head_sha) && head!==snapshot.head_sha,
