@@ -35,13 +35,13 @@ if ($ctx.target.role -ceq 'wrapper') {
     $source=$fresh.($application.source_field)
     $targetId='python-'+$role
     if ($source -cne $ctx.plan.target_snapshots.$targetId.head_sha -or $fresh.wrapper_sha -cne $ctx.parents.'python-wrapper') { throw 'Post-merge application proof differs from frozen source/actual parent pin.' }
-    $parentPrs=@(Invoke-PythonGh @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/commits/$($fresh.wrapper_sha)/pulls?per_page=100") | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.merge_commit_sha -ceq $fresh.wrapper_sha -and $_.merged_at -and $_.base.ref -ceq 'dev' })
+    $parentPrs=@(Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/commits/$($fresh.wrapper_sha)/pulls?per_page=100") | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.merge_commit_sha -ceq $fresh.wrapper_sha -and $_.merged_at -and $_.base.ref -ceq 'dev' })
     if ($parentPrs.Count -ne 1) { throw 'Actual wrapper parent does not identify a unique reviewed merge.' }
-    $parent=Invoke-PythonGh @('api',"repos/$PythonWrapperRepository/pulls/$($parentPrs[0].number)") | ConvertFrom-Json
+    $parent=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/pulls/$($parentPrs[0].number)") | ConvertFrom-Json
     if ($parent.merged_by.type -cne 'User') { throw 'Wrapper parent merge must be human reviewed.' }
     Assert-PythonMergedWrapper $fresh.wrapper_sha ([string]$parent.number) $approval
     Assert-PythonMergedApplicationPreflight $approval $role $fresh.wrapper_sha $source ([string]$fresh.preflight_run_id) (Join-Path $WorkRoot 'merged-application-evidence') $config
-    $delta=Invoke-PythonGh @('api',"repos/$($application.repository)/compare/${source}...$($ctx.head)") | ConvertFrom-Json
+    $delta=Invoke-PythonGh -Arguments @('api',"repos/$($application.repository)/compare/${source}...$($ctx.head)") | ConvertFrom-Json
     if ($delta.status -cne 'ahead' -or $delta.total_commits -lt 1 -or $delta.files.Count -ne 1) { throw 'Application merge is not the exact frozen-source gitlink update.' }
     Assert-PythonDiff @($delta.files.filename) @($application.gitlink)
     $preflights += [pscustomobject]@{repository=$application.repository;run_id=[string]$fresh.preflight_run_id;source_sha=$source;workflow='.github/workflows/wss-preflight.yml'}
