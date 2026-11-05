@@ -25,7 +25,9 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan}={}) {
     requireThat(run.repository?.full_name===c.repository&&run.head_repository?.full_name===c.repository&&run.path===t.workflow&&run.head_branch==='dev'&&['push','workflow_dispatch'].includes(run.event)&&run.status==='completed'&&run.conclusion==='success','Wake-up is not successful committed integration CI');
     requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/main`&&c.sourceSha===g.head(c.repository,'main'),'Completion notification must execute current trusted main');
     const prs=g.pages(`repos/${c.repository}/commits/${head}/pulls`).filter(p=>p.merged_at&&p.merge_commit_sha===head&&p.base?.ref==='dev');
+    if(prs.length===0)return {needed:false,reason:'Committed CI has no dependency PR to advance.'};
     requireThat(prs.length===1,'Completion is not a unique dependency merge');pr=g.get(`repos/${c.repository}/pulls/${prs[0].number}`);
+    if(pr.user?.type!=='Bot')return {needed:false,reason:'Ordinary source/CI merge is not a bot dependency rollout.'};
     requireThat(Date.parse(run.created_at)>=Date.parse(pr.merged_at),'CI predates the actual dependency merge');
   }else throw Error('Unsupported integration notification event');
   requireThat(pr.merged===true&&pr.state==='closed'&&pr.merge_commit_sha===head&&pr.base?.ref==='dev'&&pr.base?.repo?.full_name===c.repository&&pr.head?.repo?.full_name===c.repository&&pr.user?.type==='Bot'&&pr.merged_by?.type==='User'&&g.head(c.repository)===head,'Notification requires the current human-reviewed bot dependency merge');

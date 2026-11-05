@@ -17,6 +17,7 @@ function fixture(family='python'){
 }
 for(const family of Object.keys(targets))test(`${family} uses one wake-up implementation after its own actual merge`,()=>{const f=fixture(family);assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);});
 test('successful postmerge completion wakes its family from trusted main',()=>{const f=fixture();f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}},sourceSha:sha(3),workflowRef:f.context.workflowRef.replace('/dev','/main')};assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);f.run.conclusion='failure';assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/successful committed/);});
+test('ordinary source CI does not request coordinator credentials',()=>{const f=fixture();f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}},sourceSha:sha(3),workflowRef:f.context.workflowRef.replace('/dev','/main')};f.pr.user.type='User';assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,false);});
 test('unmerged, foreign, stale or bot-merged changes cannot request coordinator credentials',()=>{
   for(const mutate of [f=>f.pr.merged=false,f=>f.pr.merged_by.type='Bot',f=>f.pr.head.repo.full_name='other/repo',f=>f.p.candidate.commit=sha(9),f=>f.g.object=()=>({sha:sha(8)}),f=>f.context.workflowRef='untrusted']){const f=fixture();mutate(f);assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f));}
 });
