@@ -1,8 +1,8 @@
 . "$PSScriptRoot/PythonContract.ps1"
 . "$PSScriptRoot/MacOSConsumerEvidence.ps1"
+. "$PSScriptRoot/wss-ci/Preflight.ps1"
 
 function Wait-PythonRun([string]$Repository,[string]$RunId,[string]$Sha,[string]$Workflow,[string]$Event,[int]$TimeoutSeconds=2400) {
-    . "$PSScriptRoot/wss-ci/Preflight.ps1"
     Wait-WssCiRun $Repository $RunId $Sha $Workflow $Event $TimeoutSeconds
 }
 function Assert-PythonProducer($Candidate) {
@@ -33,7 +33,6 @@ function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSh
     Assert-PythonSha $WrapperSha
     Assert-PythonSha $ApplicationSha
     if ($Repository -cnotin @($PythonWrapperRepository,$PythonCliRepository,$PythonRosRepository)) { throw 'Unknown Python preflight repository.' }
-    . "$PSScriptRoot/wss-ci/Preflight.ps1"
     $found=Start-WssCiPreflight -Repository $Repository -Candidate $Candidate -WrapperSha $WrapperSha -ApplicationSha $ApplicationSha -DispatchToken $env:PYTHON_PREFLIGHT_TOKEN
     if($NoWait){return $found}
     $expectedSha=if($Repository -ceq $PythonWrapperRepository){$WrapperSha}else{$ApplicationSha}

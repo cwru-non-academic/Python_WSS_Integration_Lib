@@ -124,47 +124,33 @@ $failed.id=101;$failed.conclusion='failure'
 $ordered=@(Get-PythonFinalHeadWrapperRuns @(@{workflow_runs=@($runFixture,$failed)}) $prFixture @($prFixture) | Sort-Object { [long]$_.id } -Descending)
 Assert-Test ($ordered[0].conclusion -ceq 'failure') 'Latest failed exact-head CI must remain visible to acceptance; never select an older green run.'
 
-# Exercise the actual preflight request builder with queued-only API stubs.
-# No remote command runs and no successful ROS runtime evidence is fabricated.
-$script:posted=$null;$script:requestRole='cli';$script:ambiguous=$false;$script:wrongSource=$false
-function Invoke-PythonGh([string[]]$Arguments) {
-    if ($Arguments[-1] -notlike '*wss-preflight.yml/runs?*') { throw 'Unexpected unit API request.' }
-    if (!$script:posted -and !$script:ambiguous) { return '[{"workflow_runs":[]}]' }
-    $source=if ($script:requestRole -ceq 'wrapper') { 'c'*40 } elseif ($script:requestRole -ceq 'ros') { 'e'*40 } else { 'd'*40 }
-    if ($script:wrongSource) { $source='f'*40 }
-    $run=@{id='900';head_sha=$source;status='queued';display_title="WSS preflight 123 / wss-123-456-$('c'*40)-$(if ($script:requestRole -ceq 'ros') {'e'*40} else {'d'*40})"}
-    $runs=@($run);if ($script:ambiguous) { $runs+=@($run) }
-    ConvertTo-Json -InputObject @(@{workflow_runs=$runs}) -Depth 8 -Compress
+# The shared Node engine owns HTTP/discovery rejection contracts, exercised by
+# preflight.test.mjs on all three hosted OSes. This fixture checks the actual
+# Python adapter boundary without making remote commands or fabricating proof.
+$script:sharedRequest=$null
+function Start-WssCiPreflight([string]$Repository,$Candidate,[string]$WrapperSha,[string]$ApplicationSha,[string]$DispatchToken) {
+    $script:sharedRequest=@{repository=$Repository;candidate=$Candidate;wrapper_sha=$WrapperSha;application_sha=$ApplicationSha;token=$DispatchToken}
+    [pscustomobject]@{id='900';status='queued';head_sha=$ApplicationSha}
 }
-function gh { $script:posted=($input -join "`n") | ConvertFrom-Json; $global:LASTEXITCODE=0 }
 $savedPreflightToken=$env:PYTHON_PREFLIGHT_TOKEN
 $env:PYTHON_PREFLIGHT_TOKEN='unit-only-no-credentials'
-foreach ($role in @('wrapper','cli','ros')) {
-    $script:requestRole=$role;$script:posted=$null
-    $repo=if ($role -ceq 'wrapper') { $PythonWrapperRepository } else { (Get-PythonApplication $role).repository }
-    $appSha=if ($role -ceq 'ros') { 'e'*40 } else { 'd'*40 }
+foreach($role in @('wrapper','cli','ros')) {
+    $script:sharedRequest=$null
+    $repo=if($role -ceq 'wrapper'){$PythonWrapperRepository}else{(Get-PythonApplication $role).repository}
+    $appSha=if($role -ceq 'ros'){'e'*40}else{'d'*40}
     $queued=Start-PythonPreflight $repo $candidate ('c'*40) $appSha -NoWait
     Assert-Test ($queued.status -ceq 'queued') 'NoWait must not claim completed acceptance.'
-    Assert-Test ($script:posted.ref -ceq 'dev') 'Preflights must target dev.'
-    Assert-Test ($script:posted.inputs.wrapper_sha -ceq ('c'*40)) 'Preflight wrapper source changed.'
-    $field=if ($role -ceq 'ros') {'ros_sha'} else {'cli_sha'}
-    Assert-Test ($script:posted.inputs.$field -ceq $appSha) 'Preflight application source changed.'
-    $unexpected=if ($role -ceq 'ros') {'cli_sha'} else {'ros_sha'}
-    Assert-Test ($script:posted.inputs.PSObject.Properties.Name -cnotcontains $unexpected) 'Preflight inputs coupled independent applications or changed CLI contract.'
+    Assert-Test ($script:sharedRequest.repository -ceq $repo) 'Adapter changed the target repository.'
+    Assert-Test ($script:sharedRequest.wrapper_sha -ceq ('c'*40) -and $script:sharedRequest.application_sha -ceq $appSha) 'Adapter changed exact source identities.'
+    Assert-Test ($script:sharedRequest.token -ceq 'unit-only-no-credentials') 'Adapter did not forward the separate scoped dispatch credential.'
+    Assert-Test ($script:sharedRequest.candidate.run_id -ceq $candidate.run_id) 'Adapter changed candidate identity.'
 }
-$script:posted=$null;$script:ambiguous=$true
-Assert-Rejected { Start-PythonPreflight $PythonRosRepository $candidate ('c'*40) ('e'*40) -NoWait } 'Ambiguous preflight correlation must fail without redispatch.'
-Assert-Test (!$script:posted) 'Ambiguous correlation must not dispatch.'
-$script:ambiguous=$false;$script:wrongSource=$true;$script:requestRole='ros';$script:posted=$null
-Assert-Rejected { Start-PythonPreflight $PythonRosRepository $candidate ('c'*40) ('e'*40) -NoWait } 'Source-raced correlated preflight must fail.'
-$script:wrongSource=$false;$script:posted=$null
-Assert-Rejected { Start-PythonPreflight 'cwru-non-academic/Unknown' $candidate ('c'*40) ('e'*40) -NoWait } 'Unknown dispatch repository must fail.'
-Assert-Test (!$script:posted) 'Unknown repository must not dispatch.'
-$env:PYTHON_PREFLIGHT_TOKEN=$null
-Assert-Rejected { Start-PythonPreflight $PythonRosRepository $candidate ('c'*40) ('e'*40) -NoWait } 'Missing scoped token must fail before dispatch.'
-Assert-Test (!$script:posted) 'Missing token must not dispatch.'
+$script:sharedRequest=$null
+Assert-Rejected {Start-PythonPreflight 'cwru-non-academic/Unknown' $candidate ('c'*40) ('e'*40) -NoWait} 'Unknown dispatch repository must fail before the shared boundary.'
+Assert-Test (!$script:sharedRequest) 'Unknown repository reached the shared transport.'
+Assert-Rejected {Start-PythonPreflight $PythonRosRepository $candidate 'short' ('e'*40) -NoWait} 'Incomplete adapter source must fail.'
+Assert-Test (!$script:sharedRequest) 'Incomplete source reached the shared transport.'
 $env:PYTHON_PREFLIGHT_TOKEN=$savedPreflightToken
-
 # Queue metadata below is a unit stub, never green conformance evidence. Every
 # wait fails deliberately; no approval may be emitted and both apps are attempted.
 $script:attempts=[Collections.Generic.List[string]]::new()

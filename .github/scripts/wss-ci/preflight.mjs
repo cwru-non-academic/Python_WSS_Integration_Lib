@@ -48,8 +48,11 @@ export function request(context){
   return {repository:context.repository,source_sha:expected,title:`WSS preflight ${c.run_id} / ${correlation}`,body:{ref:'dev',inputs}};
 }
 
-export function assertRun(run,{repository,source_sha,workflow='wss-preflight.yml',event='workflow_dispatch',title,run_id}){
+function expectation({repository,source_sha,workflow='wss-preflight.yml',event='workflow_dispatch'}){
   requireThat(known(repository)&&sha(source_sha)&&/^[A-Za-z0-9_-]+\.yml$/.test(workflow)&&['push','workflow_dispatch'].includes(event),'Invalid exact workflow expectation');
+}
+export function assertRun(run,{repository,source_sha,workflow='wss-preflight.yml',event='workflow_dispatch',title,run_id}){
+  expectation({repository,source_sha,workflow,event});
   requireThat(id(run?.id)&&(!run_id||String(run.id)===String(run_id))&&run.repository?.full_name===repository&&run.head_repository?.full_name===repository&&run.path===`.github/workflows/${workflow}`&&run.head_sha===source_sha&&run.head_branch==='dev'&&run.event===event&&(!title||run.display_title===title),'Workflow run identity/source mismatch; no run substitution');
   if(run.status==='completed')requireThat(run.conclusion==='success','Required workflow failed; never substitute another green run');
   return run;
@@ -80,6 +83,7 @@ export async function startPreflight(g,context,{post=(repo,body)=>dispatchJson(r
 }
 
 export async function waitRun(g,expected,{now=Date.now,pause=sleep}={}){
+  expectation(expected);
   requireThat(id(expected.run_id),'Exact workflow run ID required');
   const seconds=expected.timeout_seconds??2400;requireThat(Number.isInteger(seconds)&&seconds>=1&&seconds<=7200,'Invalid workflow timeout');
   const deadline=now()+seconds*1000;

@@ -57,6 +57,14 @@ test('wait uses the same exact run throughout, rejecting identity changes and fa
   f.run.status='completed';f.run.conclusion='failure';await assert.rejects(waitRun(f.g,e,f.options),/failed/);
   assert.throws(()=>assertRun({...f.run,conclusion:'success',id:99},e),/identity/);
 });
+test('a green PR artifact cannot masquerade as the exact canonical dev push producer',()=>{
+  const f=fixture(),repo=candidate.repository;
+  const run={...f.run,repository:{full_name:repo},head_repository:{full_name:repo},head_sha:candidate.commit,path:'.github/workflows/artifacts.yml',event:'pull_request'};
+  assert.throws(()=>assertRun(run,{repository:repo,source_sha:candidate.commit,workflow:'artifacts.yml',event:'push',run_id:'56'}),/identity/);
+});
+test('invalid wait expectations fail before any GitHub lookup',async()=>{
+  let reads=0;await assert.rejects(waitRun({run:()=>{reads++;}},{repository:'foreign/repo',source_sha:sha(1),run_id:'56'}),/expectation/);assert.equal(reads,0);
+});
 test('HTTP body is a UTF-8 file with literal JSON and scoped credential isolation',()=>{
   let count=0,path;
   const body={ref:'dev',inputs:{text:'quote" slash\\ newline\n Unicode λ literal $(value)'}};
