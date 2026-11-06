@@ -1,10 +1,14 @@
-name: Verify dev release acceptance
+name: Verify release acceptance
 run-name: WSS acceptance python-wrapper ${{ inputs.plan_id }}
 on:
   workflow_dispatch:
     inputs:
       producer_run_id: {required: true, type: string}
       plan_id: {required: true, type: string}
+env:
+  WSS_CI_CHANNEL: ${{ github.ref_name }}
+  WSS_TARGET_ROOT: ${{ github.workspace }}/source
+  WSS_CORE_TOOLS_ROOT: ${{ github.workspace }}/contract
 permissions:
   contents: read
   actions: read
@@ -14,14 +18,14 @@ concurrency:
   cancel-in-progress: false
 jobs:
   receipt:
-    name: Verify exact reviewed dev acceptance
+    name: Verify exact reviewed acceptance
     runs-on: windows-2022
     timeout-minutes: 25
     steps:
-      - name: Require dev reconciliation before credentials
+      - name: Require target reconciliation before credentials
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -cne 'refs/heads/dev' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') { throw 'Only read-only dev reconciliation is supported.' }
+          if ($env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') { throw 'Only read-only target branch reconciliation is supported.' }
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -30,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: be8546ca46256696bb366925b0094023d7cefc2c
+          ref: d965f6abda5dcad8ddda374ac00b67f5e5ddea91
           path: contract
           persist-credentials: false
       - uses: actions/setup-node@v4

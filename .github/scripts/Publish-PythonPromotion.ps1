@@ -1,13 +1,14 @@
 param([Parameter(Mandatory)][string]$RepositoryRoot,[Parameter(Mandatory)][string]$WorkRoot)
 . "$PSScriptRoot/PythonPromotion.ps1"
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_REF -cne 'refs/heads/dev' -or !$env:PYTHON_PUSH_TOKEN) { throw 'Publication requires the trusted dev workflow and delayed scoped token.' }
+Assert-WssCiTargetRef
+if ($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or !$env:PYTHON_PUSH_TOKEN) { throw 'Publication requires the trusted dispatched target workflow and delayed scoped token.' }
 $prepared=Get-Content -LiteralPath (Join-Path $WorkRoot 'prepared.json') -Raw | ConvertFrom-Json
 if ($prepared.no_op) { throw 'No-op preparation must not mint a write token or publish.' }
 $role=$prepared.role
 if ($role -ceq 'wrapper') { $repo=$PythonWrapperRepository }
 else { $application=Get-PythonApplication $role; $repo=$application.repository }
 if ($repo -cne $env:GITHUB_REPOSITORY) { throw 'Wrong publication repository.' }
-$config=Read-PythonConfig (Join-Path $RepositoryRoot '.github/python-ci.json')
+$config=Read-PythonConfig (Join-Path $RepositoryRoot '.github/python-ci.json') -Channel (Get-WssCiChannel)
 if (!$config.baseline_ready -or $config.automated_execution -cne 'pythonnet') { throw 'Approved .NET promotion baseline required.' }
 $approval=Read-PythonApproval (Join-Path $WorkRoot 'approval.json')
 if ($role -cin @('wrapper','ros')) { Assert-PythonFanoutApproval $approval }
@@ -58,6 +59,7 @@ if($role -cne 'wrapper') {
 if($role -ceq 'wrapper' -and 'python' -ceq 'unity'){$body="<!-- wss-unity-promotion:v1 -->`n"+$body}
 [IO.File]::WriteAllText($bodyPath,$body)
 $descriptor=@{target_id="python-$role";repository_root=[IO.Path]::GetFullPath($RepositoryRoot);source_sha=$prepared.source_sha;candidate=$approval.candidate;branch=$branch;allowed_paths=@($allowed);markers=$markers;gitlinks=$gitlinks;parent_heads=$parents;body_path=[IO.Path]::GetFullPath($bodyPath);title="Promote verified Python WSS $($approval.candidate.run_id)";commit_message="Promote verified Python WSS $($approval.candidate.run_id)"}
+$descriptor.channel=Get-WssCiChannel
 $descriptorPath=Join-Path $WorkRoot 'publication.json'
 $descriptor|ConvertTo-Json -Depth 16|Set-Content -LiteralPath $descriptorPath
 $saved=$env:WSS_PUSH_TOKEN

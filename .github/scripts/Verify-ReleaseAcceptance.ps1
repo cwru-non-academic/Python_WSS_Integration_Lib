@@ -5,16 +5,17 @@ param(
     [Parameter(Mandatory)][string]$OutputPath
 )
 . (Join-Path $ToolsRoot '.github/scripts/ReleaseReceiptContract.ps1')
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cne 'refs/heads/dev') { throw 'Read-only receipt validation requires the actual dev emitter.' }
+Assert-WssCiTargetRef
+if ($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') { throw 'Read-only receipt validation requires the actual dispatched emitter.' }
 $ctx=Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json
-if ($ctx.head -cne $env:GITHUB_SHA -or $ctx.target.repository -cne $env:GITHUB_REPOSITORY) { throw 'Receipt context source mismatch.' }
+if ($ctx.head -cne $env:GITHUB_SHA -or $ctx.target.repository -cne $env:GITHUB_REPOSITORY -or $ctx.plan.channel -cne (Get-WssCiChannel) -or $ctx.target.branch -cne (Get-WssCiChannel)) { throw 'Receipt context source/channel mismatch.' }
 if (Test-Path -LiteralPath $WorkRoot) { throw 'Receipt validation workspace must be new.' }
 $null=New-Item -ItemType Directory -Path $WorkRoot
 $approval=Read-PythonApprovalMarker $ctx.pr.body (Join-Path $WorkRoot 'approval.json')
 Assert-PythonFanoutApproval $approval
 Assert-PythonSameCandidate $approval.candidate $ctx.plan.candidate
 Assert-PythonReceiptSnapshots $approval $ctx.plan
-$config=Read-PythonConfig (Join-Path $ToolsRoot '.github/python-ci.json')
+$config=Read-PythonConfig (Join-Path $ToolsRoot '.github/python-ci.json') -Channel (Get-WssCiChannel)
 $preflights=@()
 foreach ($role in @('wrapper','cli','ros')) {
     $targetId=if ($role -ceq 'wrapper') { 'python-wrapper' } else { 'python-'+$role }
@@ -35,7 +36,7 @@ if ($ctx.target.role -ceq 'wrapper') {
     $source=$fresh.($application.source_field)
     $targetId='python-'+$role
     if ($source -cne $ctx.plan.target_snapshots.$targetId.head_sha -or $fresh.wrapper_sha -cne $ctx.parents.'python-wrapper') { throw 'Post-merge application proof differs from frozen source/actual parent pin.' }
-    $parentPrs=@(Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/commits/$($fresh.wrapper_sha)/pulls?per_page=100") | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.merge_commit_sha -ceq $fresh.wrapper_sha -and $_.merged_at -and $_.base.ref -ceq 'dev' })
+    $parentPrs=@(Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$PythonWrapperRepository/commits/$($fresh.wrapper_sha)/pulls?per_page=100") | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.merge_commit_sha -ceq $fresh.wrapper_sha -and $_.merged_at -and $_.base.ref -ceq (Get-WssCiChannel) })
     if ($parentPrs.Count -ne 1) { throw 'Actual wrapper parent does not identify a unique reviewed merge.' }
     $parent=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/pulls/$($parentPrs[0].number)") | ConvertFrom-Json
     if ($parent.merged_by.type -cne 'User') { throw 'Wrapper parent merge must be human reviewed.' }

@@ -1,32 +1,28 @@
 . "$PSScriptRoot/PythonContract.ps1"
 . "$PSScriptRoot/MacOSConsumerEvidence.ps1"
+. "$PSScriptRoot/wss-ci/Preflight.ps1"
 
 function Wait-PythonRun([string]$Repository,[string]$RunId,[string]$Sha,[string]$Workflow,[string]$Event,[int]$TimeoutSeconds=2400) {
-    Assert-PythonSha $Sha
-    $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    do {
-        $run=Invoke-PythonGh -Arguments @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
-        if ($run.repository.full_name -cne $Repository -or $run.path -cne ".github/workflows/$Workflow" -or $run.head_sha -cne $Sha -or $run.event -cne $Event) { throw 'Workflow run identity mismatch.' }
-        if ($run.status -ceq 'completed') {
-            if ($run.conclusion -cne 'success') { throw 'Required workflow did not succeed; never substitute another green run.' }
-            return $run
-        }
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for exact workflow.' }
-        Start-Sleep -Seconds 15
-    } while ($true)
+    Wait-WssCiRun $Repository $RunId $Sha $Workflow $Event $TimeoutSeconds
 }
 function Assert-PythonProducer($Candidate) {
     Assert-PythonCandidate $Candidate
+    $context=Get-WssCiChannelContext
     $run=Wait-PythonRun $Candidate.repository $Candidate.run_id $Candidate.commit 'artifacts.yml' 'push'
     if ($run.run_attempt -lt 1) { throw 'Exact producer attempt is required.' }
-    if ($run.head_branch -cne 'dev' -or $run.head_repository.full_name -cne $Candidate.repository -or $Candidate.archive -cne 'WSS-Universal-ci.zip') { throw 'Automatic Python propagation requires the canonical Core dev push archive.' }
-    $compare=Invoke-PythonGh -Arguments @('api',"repos/$($Candidate.repository)/compare/$($Candidate.commit)...dev") | ConvertFrom-Json
+    if ($run.head_branch -cne $context.branch -or $run.head_repository.full_name -cne $Candidate.repository -or $Candidate.archive -cne 'WSS-Universal-ci.zip') { throw 'Automatic Python propagation requires the canonical Core channel push archive.' }
+    $compare=Invoke-PythonGh -Arguments @('api',"repos/$($Candidate.repository)/compare/$($Candidate.commit)...$($context.branch)") | ConvertFrom-Json
     if ($compare.status -cnotin @('ahead','identical')) { throw 'Producer commit is not contained in Core dev.' }
     $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$($Candidate.repository)/actions/runs/$($Candidate.run_id)/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
     $jobs=@($pages | ForEach-Object { $_.jobs })
     Assert-PythonProducerJobs $jobs (Get-PythonProducerContract $Candidate.commit)
     $artifact=Invoke-PythonGh -Arguments @('api',"repos/$($Candidate.repository)/actions/artifacts/$($Candidate.artifact_id)") | ConvertFrom-Json
     if ($artifact.expired -or $artifact.name -cne 'universal-release-assets' -or [string]$artifact.workflow_run.id -cne [string]$Candidate.run_id -or $artifact.workflow_run.head_sha -cne $Candidate.commit) { throw 'Wrong/expired producer artifact.' }
+    if($context.channel -ceq 'main'){
+        if($compare.status -cne 'identical'){throw 'Core main moved from the exact candidate.'}
+        $proof=Assert-WssCiWorkflowAuthorization ([string]$Candidate.run_id)
+        Assert-PythonSameCandidate $proof.candidate $Candidate
+    }
 }
 function Assert-PythonProducerJobs($Jobs,[string]$Contract) {
     $null = @(Get-WssUniversalFiles $Contract)
@@ -34,7 +30,8 @@ function Assert-PythonProducerJobs($Jobs,[string]$Contract) {
     Assert-WssCiProducerJobs $Jobs $Contract
 }
 function Get-PythonHead([string]$Repository) {
-    $branch=Invoke-PythonGh -Arguments @('api',"repos/$Repository/branches/dev") | ConvertFrom-Json
+    $channel=Get-WssCiChannel
+    $branch=Invoke-PythonGh -Arguments @('api',"repos/$Repository/branches/$channel") | ConvertFrom-Json
     Assert-PythonSha $branch.commit.sha
     $branch.commit.sha
 }
@@ -43,38 +40,9 @@ function Start-PythonPreflight([string]$Repository,$Candidate,[string]$WrapperSh
     Assert-PythonSha $WrapperSha
     Assert-PythonSha $ApplicationSha
     if ($Repository -cnotin @($PythonWrapperRepository,$PythonCliRepository,$PythonRosRepository)) { throw 'Unknown Python preflight repository.' }
-    $correlation="wss-$($Candidate.run_id)-$($Candidate.artifact_id)-$WrapperSha-$ApplicationSha"
-    $title="WSS preflight $($Candidate.run_id) / $correlation"
-    function Find-Run {
-        $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
-        $runs=@($pages | ForEach-Object { $_.workflow_runs } | Where-Object { $_.display_title -ceq $title })
-        if ($runs.Count -gt 1) { throw 'Ambiguous correlated preflight; no run selection or redispatch.' }
-        if ($runs.Count -eq 1) { return $runs[0] }
-    }
-    $found=Find-Run
-    if (!$found) {
-        $inputs=@{candidate_json=($Candidate | ConvertTo-Json -Depth 5 -Compress);wrapper_sha=$WrapperSha;correlation_id=$correlation}
-        $sourceField=if ($Repository -ceq $PythonRosRepository) { 'ros_sha' } else { 'cli_sha' }
-        $inputs[$sourceField]=$ApplicationSha
-        $body=@{ref='dev';inputs=$inputs} | ConvertTo-Json -Depth 5 -Compress
-        if (!$env:PYTHON_PREFLIGHT_TOKEN) { throw 'Scoped downstream Actions-write token required.' }
-        $readToken=$env:GH_TOKEN
-        try {
-            $env:GH_TOKEN=$env:PYTHON_PREFLIGHT_TOKEN
-            $body | & gh api --method POST "repos/$Repository/actions/workflows/wss-preflight.yml/dispatches" --input -
-            if ($LASTEXITCODE -ne 0) { throw 'Preflight dispatch failed/uncertain. Inspect before any retry.' }
-        } finally { $env:GH_TOKEN=$readToken }
-        $deadline=[DateTime]::UtcNow.AddSeconds(180)
-        do {
-            $found=Find-Run
-            if ($found) { break }
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'Dispatched preflight not discovered; inspect before retrying.' }
-            Start-Sleep -Seconds 5
-        } while ($true)
-    }
-    $expectedSha=if ($Repository -ceq $PythonWrapperRepository) { $WrapperSha } else { $ApplicationSha }
-    if ($found.head_sha -cne $expectedSha) { throw 'Correlated preflight source changed; no automatic redispatch.' }
-    if ($NoWait) { return $found }
+    $found=Start-WssCiPreflight -Repository $Repository -Candidate $Candidate -WrapperSha $WrapperSha -ApplicationSha $ApplicationSha -DispatchToken $env:PYTHON_PREFLIGHT_TOKEN
+    if($NoWait){return $found}
+    $expectedSha=if($Repository -ceq $PythonWrapperRepository){$WrapperSha}else{$ApplicationSha}
     Wait-PythonRun $Repository ([string]$found.id) $expectedSha 'wss-preflight.yml' 'workflow_dispatch'
 }
 function Get-PythonApprovalRoles($Approval) {
@@ -326,7 +294,7 @@ function Get-PythonFinalHeadWrapperRuns($Pages,$Pr,$CommitPullRequests) {
     # exact head commit's PR association, never through branch name alone.
     $associated=@($CommitPullRequests | Where-Object {
         $_.number -eq $Pr.number -and $_.head.sha -ceq $Pr.head.sha -and
-        $_.head.ref -ceq $Pr.head.ref -and $_.base.ref -ceq 'dev' -and
+        $_.head.ref -ceq $Pr.head.ref -and $_.base.ref -ceq (Get-WssCiChannel) -and
         $_.head.repo.full_name -ceq $PythonWrapperRepository -and
         $_.base.repo.full_name -ceq $PythonWrapperRepository
     })
@@ -348,13 +316,16 @@ function Get-PythonFinalHeadWrapperRuns($Pages,$Pr,$CommitPullRequests) {
 }
 function Assert-PythonMergedWrapper([string]$Sha,[string]$PrNumber,$Approval) {
     Assert-PythonSha $Sha
+    $context=Get-WssCiChannelContext
     if ($PrNumber -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid wrapper PR number.' }
     $pr=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/pulls/$PrNumber") | ConvertFrom-Json
-    if (!$pr.merged -or $pr.merge_commit_sha -cne $Sha -or $pr.base.ref -cne 'dev' -or $pr.base.repo.full_name -cne $PythonWrapperRepository -or
+    if (!$pr.merged -or $pr.merge_commit_sha -cne $Sha -or $pr.base.ref -cne $context.branch -or $pr.base.repo.full_name -cne $PythonWrapperRepository -or
         $pr.head.repo.full_name -cne $PythonWrapperRepository -or $pr.user.type -cne 'Bot') { throw 'Wrapper must be the actual reviewed same-repository bot PR merge into dev.' }
     if ($pr.head.ref -cne "automation/python-wss-$($Approval.candidate.run_id)-$($Approval.candidate.sha256)") { throw 'Merged wrapper PR is not the canonical candidate branch.' }
-    $compare=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/compare/${Sha}...dev") | ConvertFrom-Json
+    if($context.channel -ceq 'main' -and $pr.merged_by.type -cne 'User'){throw 'Main wrapper merge must be human reviewed.'}
+    $compare=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/compare/${Sha}...$($context.branch)") | ConvertFrom-Json
     if ($compare.status -cnotin @('ahead','identical')) { throw 'Wrapper merge is not contained in dev.' }
+    if($context.channel -ceq 'main' -and $compare.status -cne 'identical'){throw 'Accepted main wrapper moved.'}
     $delta=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/compare/$($Approval.wrapper.source_sha)...$Sha") | ConvertFrom-Json
     if ($delta.total_commits -lt 1 -or $delta.files.Count -ge 300) { throw 'Wrapper comparison empty or potentially truncated.' }
     Assert-PythonDiff @($delta.files.filename) (Get-PythonAllowedWrapperPaths)
