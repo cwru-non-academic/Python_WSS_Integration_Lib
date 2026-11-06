@@ -93,11 +93,11 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env,adapte
   }));
   const work=mkdtempSync(join(tmpdir(),'wss-receipt-'));
   try {
-    const context={plan:p,target:t,head,pr,parents,paths:{sourceRoot,toolsRoot,validatorRoot,integrationRoot}};
+    const adapterContext={plan:p,target:t,head,pr,parents,paths:{sourceRoot,toolsRoot,validatorRoot,integrationRoot}};
     let preflights;
-    if(adapter) preflights=await adapter(context);
+    if(adapter) preflights=await adapter(adapterContext);
     else {
-      writeFileSync(join(work,'context.json'),JSON.stringify(context));
+      writeFileSync(join(work,'context.json'),JSON.stringify(adapterContext));
       const script=profile.family==='csharp'||profile.family==='unity'?'Write-ReleaseReceipt.ps1':'Verify-ReleaseAcceptance.ps1';
       const args=['-NoProfile','-File',join(toolsRoot,'.github/scripts',script),'-ContextPath',join(work,'context.json')];
       if(script==='Write-ReleaseReceipt.ps1') args.push('-TargetId',id,'-ProducerRunId',producerId,'-PlanId',planId);
