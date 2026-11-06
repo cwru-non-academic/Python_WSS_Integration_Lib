@@ -1,20 +1,21 @@
 param([ValidateSet('cli','ros')][string]$Role='cli',[Parameter(Mandatory)][string]$EventPath,[Parameter(Mandatory)][string]$WorkRoot,[switch]$ValidateOnly)
 . "$PSScriptRoot/PythonPromotion.ps1"
+$context=Get-WssCiChannelContext
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_REPOSITORY -cne $PythonWrapperRepository) { throw 'Trusted wrapper dispatcher required.' }
 $application=Get-PythonApplication $Role
 $event=Get-Content -LiteralPath $EventPath -Raw | ConvertFrom-Json
 $pr=$event.pull_request
-if (!$pr.merged -or $pr.base.ref -cne 'dev' -or $pr.head.repo.full_name -cne $PythonWrapperRepository -or $pr.user.type -cne 'Bot' -or $pr.head.ref -cnotlike 'automation/python-wss-*') { throw 'Not a reviewed Python dependency promotion.' }
+if (!$pr.merged -or $pr.base.ref -cne $context.branch -or $pr.head.repo.full_name -cne $PythonWrapperRepository -or $pr.user.type -cne 'Bot' -or $pr.head.ref -cnotlike 'automation/python-wss-*') { throw 'Not a reviewed Python dependency promotion.' }
 if (Test-Path -LiteralPath $WorkRoot) { throw 'Dispatcher workspace must be new.' }
 New-Item -ItemType Directory -Path $WorkRoot | Out-Null
 $approval=Read-PythonApprovalMarker $pr.body (Join-Path $WorkRoot 'approval.json')
 if ($Role -ceq 'ros') { Assert-PythonFanoutApproval $approval }
 if ($pr.head.ref -cne "automation/python-wss-$($approval.candidate.run_id)-$($approval.candidate.sha256)") { throw 'Promotion branch/candidate mismatch.' }
-$config=Read-PythonConfig "$PSScriptRoot/../python-ci.json"
+$config=Read-PythonConfig "$PSScriptRoot/../python-ci.json" -Channel $context.channel
 if (!$config.baseline_ready -or $config.automated_execution -cne 'pythonnet') { throw 'Approved .NET promotion baseline required.' }
 Assert-PythonApproval $approval (Join-Path $WorkRoot 'evidence') $config
 Assert-PythonMergedWrapper $pr.merge_commit_sha ([string]$pr.number) $approval
-$body=@{ref='dev';inputs=@{wrapper_sha=$pr.merge_commit_sha;wrapper_pr=[string]$pr.number;approval_json=($approval | ConvertTo-Json -Depth 8 -Compress)}} | ConvertTo-Json -Depth 6 -Compress
+$body=@{ref=$context.branch;inputs=@{wrapper_sha=$pr.merge_commit_sha;wrapper_pr=[string]$pr.number;approval_json=($approval | ConvertTo-Json -Depth 8 -Compress)}} | ConvertTo-Json -Depth 6 -Compress
 $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$($application.repository)/actions/workflows/promote-integration.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
 $existing=@($pages | ForEach-Object { $_.workflow_runs } | Where-Object { $_.display_title -ceq "Promote Integration $($pr.merge_commit_sha) / wss-$($approval.candidate.run_id)-$($approval.candidate.artifact_id)" })
 . "$PSScriptRoot/wss-ci/DispatchProof.ps1"

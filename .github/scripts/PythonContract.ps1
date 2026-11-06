@@ -91,13 +91,21 @@ function New-PythonProjection([string]$ArtifactRoot, [string]$WrapperRoot, [stri
     Assert-PythonProjection $Destination $record
     $record
 }
-function Read-PythonConfig([string]$Path) {
+function Read-PythonConfig([string]$Path,[string]$Channel='') {
     $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
     if ($config.schema -cne 'wss-python-ci/v1' -or $config.branch -cne 'dev' -or $config.automated_execution -cne 'pythonnet' -or
         $config.python_version -cne '3.12' -or $config.pythonnet_version -cne '3.0.5' -or
         $config.fixture_repository -cne 'cwru-non-academic/CSharp_WSS_Integration_Lib' -or $config.dotnet_expected_cases.Count -ne 10) { throw 'Unexpected Python CI contract.' }
     Assert-PythonSha $config.fixture_commit
     if ($config.fixture_sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Missing fixture digest.' }
+    # Ordinary committed-payload validation remains compatible with historical
+    # records. Only new rollout authorization requires the explicit channel.
+    if($Channel){
+        . "$PSScriptRoot/wss-ci/Channel.ps1"
+        $context=Get-WssCiChannelContext $Channel
+        if($context.channel -ceq 'main' -and (!$config.PSObject.Properties['channels'] -or
+          @(Compare-Object @('dev','main') @($config.channels) -CaseSensitive).Count -ne 0 -or $config.channels.Count -ne 2)){throw 'Main rollout requires the deployed dual-channel configuration.'}
+    }
     $config
 }
 function Assert-PythonResults([string]$Path, $Config, [switch]$DotNet) {
