@@ -319,6 +319,8 @@ jobs:
           path: ${{ runner.temp }}/macos-complete/
 
   contracts:
+    env:
+      WSS_CI_CHANNEL: dev
     name: Promotion safety contracts
     runs-on: windows-2022
     steps:

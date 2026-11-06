@@ -3,12 +3,18 @@ run-name: ${{ github.event_name == 'workflow_dispatch' && format('Resume applica
 on:
   workflow_dispatch:
     inputs:
-      producer_run_id: {description: Canonical staged Core dev producer run, required: true, type: string}
+      producer_run_id: {description: Canonical staged Core producer run, required: true, type: string}
       barrier_run_id: {description: Trusted Core main barrier emitter run, required: true, type: string}
       barrier_attempt: {description: Exact barrier emitter attempt, required: true, type: string}
+      channel: {description: Authorized target channel, required: false, default: dev, type: choice, options: [dev, main]}
   pull_request_target:
     types: [closed]
-    branches: [dev]
+    branches: [dev, main]
+env:
+  WSS_CI_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.event.pull_request.base.ref }}
+  WSS_TARGET_ROOT: ${{ github.workspace }}
+  WSS_CORE_TOOLS_ROOT: ${{ github.workspace }}/workflow-guard
+  PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
 permissions:
   contents: read
   pull-requests: read
@@ -52,6 +58,19 @@ jobs:
           'read_repositories<<PYTHON_APPLICATIONS' >> $env:GITHUB_OUTPUT
           $read >> $env:GITHUB_OUTPUT
           'PYTHON_APPLICATIONS' >> $env:GITHUB_OUTPUT
+      - name: Read locked Core guard source
+        id: guard
+        shell: pwsh
+        run: |
+          $lock=Get-Content .github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
+          if($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cnotmatch '^[a-f0-9]{40}$' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)"){throw 'Invalid immutable Core guard lock.'}
+          "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: ${{ steps.guard.outputs.commit }}
+          path: workflow-guard
+          persist-credentials: false
       - uses: actions/create-github-app-token@v2
         id: read
         with:
@@ -101,6 +120,19 @@ jobs:
         run: |
           $config = Get-Content .github/python-ci.json -Raw | ConvertFrom-Json
           if (!$config.baseline_ready) { throw 'Candidate-promotion baseline approval remains pending.' }
+      - name: Read locked Core guard source
+        id: guard
+        shell: pwsh
+        run: |
+          $lock=Get-Content .github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
+          if($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cnotmatch '^[a-f0-9]{40}$' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)"){throw 'Invalid immutable Core guard lock.'}
+          "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: ${{ steps.guard.outputs.commit }}
+          path: workflow-guard
+          persist-credentials: false
       - uses: actions/create-github-app-token@v2
         id: read
         with:

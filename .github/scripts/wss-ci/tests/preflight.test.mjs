@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
 import {request,assertRun,startPreflight,waitRun,dispatchJson} from '../preflight.mjs';
+import {resolve} from 'node:path';
 
 const sha=n=>String(n).repeat(40),repository='cwru-non-academic/Python_WSS_Integration_Lib';
 const candidate={repository:'cwru-non-academic/WSSCore',commit:sha(1),run_id:'12',artifact_id:'34',archive:'WSS-Universal-ci.zip',sha256:'a'.repeat(64)};
@@ -79,4 +80,14 @@ test('HTTP error performs one POST, cleans request file and does not expose cred
   let count=0,path;
   assert.throws(()=>dispatchJson(repository,{ref:'dev',inputs:{}},'secret-fixture',{execute:(_cmd,args)=>{count++;path=args.at(-1);throw Error('secret-fixture');}}),error=>/failed\/uncertain/.test(error.message)&&!error.message.includes('secret-fixture'));
   assert.equal(count,1);assert.equal(existsSync(path),false);
+});
+test('main uses the same serializer but binds the immutable producer and frozen main target',async()=>{
+  const f=fixture();f.context.channel='main';f.run.head_branch='main';
+  const manifest=JSON.parse(readFileSync(resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core','tools/release/targets.main.json')));
+  const p={channel:'main',candidate,manifest,target_snapshots:{'python-wrapper':{head_sha:sha(2)}}};
+  f.g.head=(repo,branch)=>{assert.equal(branch,'main');return repo===candidate.repository?candidate.commit:sha(2);};
+  f.options.loadFrozenPlan=()=>p;
+  assert.equal((await startPreflight(f.g,f.context,f.options)).id,56);assert.equal(f.posts,1);assert.equal(request(f.context).body.ref,'main');
+  const bad=fixture();bad.context.channel='main';bad.options.loadFrozenPlan=()=>({...p,channel:'dev'});bad.g.head=()=>candidate.commit;
+  await assert.rejects(startPreflight(bad.g,bad.context,bad.options));assert.equal(bad.posts,0);
 });
