@@ -20,5 +20,9 @@
     "StopStimulationThroughCSharpImplementationDoesNotResumeStreaming"
   ],
   "python_version": "3.12",
-  "pythonnet_version": "3.0.5"
+  "pythonnet_version": "3.0.5",
+  "channels": [
+    "dev",
+    "main"
+  ]
 }
