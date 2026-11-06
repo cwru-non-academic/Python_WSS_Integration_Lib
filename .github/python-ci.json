@@ -3,8 +3,8 @@
   "branch": "dev",
   "baseline_ready": true,
   "fixture_repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
-  "fixture_commit": "02172a64c55becd5535204f46f10b4755bf3ee05",
-  "fixture_sha256": "1cdfb9448a1776011eadc9aef8356362216032013a4f268f50242746c50a0b44",
+  "fixture_commit": "6702dee21e5750d463ccec8c8b5fbd38f6bd33e4",
+  "fixture_sha256": "dac9dc354ae3c120b7d3690202059cd3cab679ac53018a0ed0515f4a8f57354f",
   "automated_execution": "pythonnet",
   "dotnet_sdk": "9.0.316",
   "dotnet_expected_cases": [
@@ -17,12 +17,18 @@
     "normalized.1.0",
     "normalized.1.2",
     "RuntimeEventEditThroughCSharpImplementationResumesConformantStreaming",
-    "StopStimulationThroughCSharpImplementationDoesNotResumeStreaming"
+    "StopStimulationThroughCSharpImplementationDoesNotResumeStreaming",
+    "analog.multichannel-isolation",
+    "normalized.multichannel-isolation"
   ],
   "python_version": "3.12",
   "pythonnet_version": "3.0.5",
   "channels": [
     "dev",
     "main"
+  ],
+  "multidevice_expected_cases": [
+    "analog.multidevice-isolation",
+    "normalized.multidevice-isolation"
   ]
 }
