@@ -61,6 +61,18 @@ internal sealed class DotNetConformanceAdapter : IDisposable
     { using (Py.GIL()) ((dynamic)_controller).StimulateAnalog(channel, pw, amp, ipi); }
     public void StimulateNormalized(string channel, float magnitude)
     { using (Py.GIL()) ((dynamic)_controller).StimulateNormalized(channel, magnitude); }
+    public void StimWithMode(string channel, float magnitude)
+    { using (Py.GIL()) ((dynamic)_controller).StimWithMode(channel, magnitude); }
+    public void LoadParamsJson()
+    { using (Py.GIL()) ((dynamic)_controller).LoadParamsJson(); }
+    public Wss.ModelModule.ModelConfigController GetModelConfigCTRL()
+    {
+        using (Py.GIL())
+        {
+            using PyObject result = ((dynamic)_controller).GetModelConfigCTRL();
+            return result.As<Wss.ModelModule.ModelConfigController>();
+        }
+    }
     public void UpdateEventRatio(int target, int ratio, int eventId)
     { using (Py.GIL()) ((dynamic)_controller).UpdateEventRatio(target, ratio, eventId); }
     public void StopStimulation(int target)

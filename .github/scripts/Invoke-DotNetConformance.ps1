@@ -86,11 +86,11 @@ $evidence=[ordered]@{
     sdk=$sdk; target_framework='net9.0'; test_framework='NUnit 3.14.0'; python_executed=$true
     python=$pythonInfo.version; pythonnet=$netVersion
     run_repository=$env:GITHUB_REPOSITORY; run_id=$env:GITHUB_RUN_ID; run_sha=$env:GITHUB_SHA
-    discovered=12; executed=12; passed=12; failed=0; skipped=0; assertion_expressions=20; stage=$Stage
+    discovered=16; executed=16; passed=16; failed=0; skipped=0; assertion_expressions=20; stage=$Stage
     projection_sha256=$projection.projection_sha256
     results_sha256=(Get-FileHash -LiteralPath $xmlPath).Hash.ToLowerInvariant()
     log_sha256=(Get-FileHash -LiteralPath $logPath).Hash.ToLowerInvariant()
 }
 $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'evidence.json')
 $projection | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'projection.json')
-Write-Output 'PASS: Python via pythonnet through shared production commands; twelve canonical cases, twenty unchanged assertion expressions; Production Python executed; emulator only, no terminal input or physical hardware.'
+Write-Output 'PASS: Python via pythonnet through shared production commands; sixteen canonical cases, twenty unchanged assertion expressions; Production Python executed; emulator only, no terminal input or physical hardware.'

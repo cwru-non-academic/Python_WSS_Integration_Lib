@@ -16,7 +16,7 @@ if ($target.StartsWith($wrapper+[IO.Path]::DirectorySeparatorChar,[StringCompari
 }
 $fixturePath=Join-Path $CSharpIntegrationRoot 'tests/Wss.CSharpImplementation.Tests/StimulationControllerConformanceTests.cs'
 $fixtureHash=(Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($fixtureHash -cne 'dac9dc354ae3c120b7d3690202059cd3cab679ac53018a0ed0515f4a8f57354f') { throw 'Canonical fixture digest changed.' }
+if ($fixtureHash -cne '14313786be4d5c6daea28e40d2f48567cbc1356feb0f0309e0a212339137923b') { throw 'Canonical fixture digest changed.' }
 $canonical=[IO.File]::ReadAllText($fixturePath)
 $factory='(?s)private static StimulationController CreateController\(string fixtureDirectory\) =>\s*new\(new StimulationOptions\s*\{\s*ConfigPath = fixtureDirectory,\s*Transport = StimulationTransportKind.Conformance,\s*MaxSetupTries = 1,\s*TickIntervalMs = 1\s*\}\);'
 if ([regex]::Matches($canonical,$factory).Count -ne 1) { throw 'Canonical controller factory changed.' }
