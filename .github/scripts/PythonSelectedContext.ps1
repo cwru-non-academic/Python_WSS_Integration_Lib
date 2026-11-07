@@ -1,4 +1,5 @@
 . "$PSScriptRoot/SelectedTestContext.ps1"
+. "$PSScriptRoot/SelectedParentSnapshot.ps1"
 
 . "$PSScriptRoot/SelectedProcessIsolation.ps1"
 function Invoke-SelectedPythonRunner([hashtable]$Options) {
@@ -31,6 +32,7 @@ function Invoke-PythonSelectedWithContext {
     )
     $ErrorActionPreference='Stop'
     $binding=Invoke-ReviewedSelectionCore $CoreRoot inspect 'python-wrapper' $ContextPath $RootsPath
+    $authority=New-SelectedParentSnapshot @($CoreRoot,$PSScriptRoot) @($ContextPath,$RootsPath,(Join-Path $PSScriptRoot 'wss-ci.lock.json'))
     $roots=Get-Content -LiteralPath $RootsPath -Raw | ConvertFrom-Json
     $wrapper=Get-SelectedProduct $roots 'cwru-non-academic/Python_WSS_Integration_Lib'
     $context=Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json
@@ -55,11 +57,15 @@ function Invoke-PythonSelectedWithContext {
     Invoke-SelectedPythonRunner $options
     $baselineRoot=$options.OutputRoot
     $baselineSnapshot=Get-PythonBaselineSnapshot $baselineRoot
+    Assert-SelectedParentSnapshot $authority
+    $baselineInventory=New-SelectedParentSnapshot @($baselineRoot)
     $options.OutputRoot=Join-Path $work 'selected'
     $options.TestRoot=$roots.test_root;$options.TestSha=$binding.test_commit
     $options.TestRepository=$binding.test_repository;$options.TestSelectionId=$binding.selection_id
     Invoke-SelectedPythonRunner $options
     if((Get-PythonBaselineSnapshot $baselineRoot) -cne $baselineSnapshot){throw 'Selected suite changed mandatory baseline output; no selection evidence emitted.'}
+    Assert-SelectedParentSnapshot $baselineInventory
+    Assert-SelectedParentSnapshot $authority
     # Core authenticates context again and revalidates exact products/tests after execution.
     Invoke-ReviewedSelectionCore $CoreRoot evidence 'python-wrapper' $ContextPath $RootsPath (Join-Path $work 'selection/evidence.json')
 }
