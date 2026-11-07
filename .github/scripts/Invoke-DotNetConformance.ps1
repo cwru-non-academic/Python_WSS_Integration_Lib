@@ -8,12 +8,31 @@ param(
     [string]$CliSha='',
     [ValidateSet('committed','candidate')][string]$Mode='committed',
     [ValidateSet('wrapper','cli')][string]$Role='wrapper',
+    [ValidateSet('all','single','multi')][string]$Stage='all',
     [string]$ArtifactRoot='',
     [string]$CandidatePath='',
     [string]$PythonExe='python',
     [ValidateRange(30,1800)][int]$TimeoutSeconds=300
 )
 . "$PSScriptRoot/PythonContract.ps1"
+$previousStage = $env:WSS_CONFORMANCE_STAGE
+try {
+# Ordinary and candidate callers must execute both isolated stages by default.
+# Explicit single/multi remain available for focused diagnosis only.
+if ($Stage -ceq 'all') {
+    $options = @{}
+    foreach ($key in $PSBoundParameters.Keys) { $options[$key] = $PSBoundParameters[$key] }
+    $options.Stage = 'single'
+    & $PSCommandPath @options
+    $options.Stage = 'multi'
+    $options.OutputRoot = Join-Path $OutputRoot 'multi'
+    & $PSCommandPath @options
+    $single = Get-Content (Join-Path $OutputRoot 'evidence.json') -Raw | ConvertFrom-Json
+    Assert-PythonMultiStageEvidence $OutputRoot $single (Read-PythonConfig $ConfigPath)
+    return
+}
+
+$env:WSS_CONFORMANCE_STAGE=$Stage
 $config=Read-PythonConfig $ConfigPath
 if ($config.automated_execution -cne 'pythonnet' -or $config.dotnet_sdk -cne '9.0.316') { throw 'Unexpected automated execution contract.' }
 if (Test-Path -LiteralPath $OutputRoot) { throw 'OutputRoot must be new.' }
@@ -68,7 +87,7 @@ $results=@(Get-ChildItem -LiteralPath $nunit -Filter '*.xml' -File)
 if ($results.Count -ne 1) { throw 'Expected exactly one real NUnit result file.' }
 $xmlPath=Join-Path $OutputRoot 'results.xml'
 Copy-Item -LiteralPath $results[0].FullName -Destination $xmlPath
-Assert-PythonResults $xmlPath $config -DotNet
+Assert-PythonResults $xmlPath $config -DotNet -Stage $Stage
 foreach ($name in @('WSS_Core_Interface.dll','Newtonsoft.Json.dll','System.Security.Permissions.dll')) {
     $binary=Join-Path $harness "bin/Debug/net9.0/$name"
     if ((Get-FileHash -LiteralPath $binary).Hash -cne (Get-FileHash -LiteralPath (Join-Path $projectionRoot $name)).Hash) { throw "Test output used a different payload assembly: $name" }
@@ -77,18 +96,20 @@ Assert-PythonProjection $projectionRoot $projection
 Assert-PythonSource $WrapperRoot $WrapperSha
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
 $inputs=Get-Content -LiteralPath (Join-Path $harness 'conformance-inputs.json') -Raw | ConvertFrom-Json
-if ($inputs.assertion_expressions -ne 18 -or $inputs.canonical_fixture_sha256 -cne $config.fixture_sha256) { throw 'Harness provenance mismatch.' }
+if ($inputs.assertion_expressions -ne 20 -or $inputs.canonical_fixture_sha256 -cne $config.fixture_sha256) { throw 'Harness provenance mismatch.' }
 $evidence=[ordered]@{
     schema='wss-python-evidence/v1'; execution='pythonnet'; role=$Role; mode=$Mode; candidate=$candidate
     wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$config.fixture_commit; fixture_sha256=$config.fixture_sha256
     sdk=$sdk; target_framework='net9.0'; test_framework='NUnit 3.14.0'; python_executed=$true
     python=$pythonInfo.version; pythonnet=$netVersion
     run_repository=$env:GITHUB_REPOSITORY; run_id=$env:GITHUB_RUN_ID; run_sha=$env:GITHUB_SHA
-    discovered=10; executed=10; passed=10; failed=0; skipped=0; assertion_expressions=18
+    discovered=16; executed=16; passed=16; failed=0; skipped=0; assertion_expressions=20; stage=$Stage
     projection_sha256=$projection.projection_sha256
     results_sha256=(Get-FileHash -LiteralPath $xmlPath).Hash.ToLowerInvariant()
     log_sha256=(Get-FileHash -LiteralPath $logPath).Hash.ToLowerInvariant()
 }
 $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'evidence.json')
 $projection | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'projection.json')
-Write-Output 'PASS: Python via pythonnet through shared production commands; ten canonical cases, eighteen unchanged assertion expressions; Production Python executed; emulator only, no terminal input or physical hardware.'
+Write-Output 'PASS: Python via pythonnet through shared production commands; sixteen canonical cases, twenty unchanged assertion expressions; Production Python executed; emulator only, no terminal input or physical hardware.'
+
+} finally { $env:WSS_CONFORMANCE_STAGE = $previousStage }

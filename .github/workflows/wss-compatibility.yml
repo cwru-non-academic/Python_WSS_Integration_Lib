@@ -334,6 +334,7 @@ jobs:
         shell: pwsh
         run: |
           ./.github/scripts/tests/Test-PythonFanout.ps1
+          ./.github/scripts/tests/Test-CandidateReadiness.ps1
           ./.github/scripts/tests/Test-MacOSReceiver.ps1
           ./.github/scripts/tests/Test-MacOSArchitectures.ps1
           ./.github/scripts/tests/Test-CandidateProvenance.ps1

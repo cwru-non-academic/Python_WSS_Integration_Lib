@@ -95,7 +95,7 @@ function Read-PythonConfig([string]$Path,[string]$Channel='') {
     $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
     if ($config.schema -cne 'wss-python-ci/v1' -or $config.branch -cne 'dev' -or $config.automated_execution -cne 'pythonnet' -or
         $config.python_version -cne '3.12' -or $config.pythonnet_version -cne '3.0.5' -or
-        $config.fixture_repository -cne 'cwru-non-academic/CSharp_WSS_Integration_Lib' -or $config.dotnet_expected_cases.Count -ne 10) { throw 'Unexpected Python CI contract.' }
+        $config.fixture_repository -cne 'cwru-non-academic/CSharp_WSS_Integration_Lib' -or $config.dotnet_expected_cases.Count -ne 16) { throw 'Unexpected Python CI contract.' }
     Assert-PythonSha $config.fixture_commit
     if ($config.fixture_sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Missing fixture digest.' }
     # Ordinary committed-payload validation remains compatible with historical
@@ -108,18 +108,19 @@ function Read-PythonConfig([string]$Path,[string]$Channel='') {
     }
     $config
 }
-function Assert-PythonResults([string]$Path, $Config, [switch]$DotNet) {
+function Assert-PythonResults([string]$Path, $Config, [switch]$DotNet, [ValidateSet('single','multi')][string]$Stage='single') {
     # Disable DTD/entity resolution: results may originate from proposed source.
     $settings = [Xml.XmlReaderSettings]::new(); $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit; $settings.XmlResolver = $null
     $reader = [Xml.XmlReader]::Create($Path,$settings)
     try { $xml=[Xml.XmlDocument]::new(); $xml.XmlResolver=$null; $xml.Load($reader) } finally { $reader.Dispose() }
     $run=$xml.DocumentElement; $cases=@($xml.SelectNodes('//test-case'))
     if ($run.get_Name() -cne 'test-run' -or $run.GetAttribute('result') -cne 'Passed' -or
-        $run.GetAttribute('testcasecount') -cne '10' -or $run.GetAttribute('total') -cne '10' -or
-        $run.GetAttribute('passed') -cne '10' -or $cases.Count -ne 10) { throw 'All ten canonical cases must be discovered, executed and passed.' }
+        $run.GetAttribute('testcasecount') -cne '16' -or $run.GetAttribute('total') -cne '16' -or
+        $run.GetAttribute('passed') -cne '16' -or $cases.Count -ne 16) { throw 'All sixteen canonical cases must be discovered, executed and passed.' }
     foreach ($attribute in @('failed','skipped','inconclusive')) { if ($run.GetAttribute($attribute) -cne '0') { throw "Nonzero or absent $attribute count." } }
     $expected=if ($DotNet) { @($Config.dotnet_expected_cases) } else { @($Config.expected_cases) }
-    if ($expected.Count -ne 10 -or @(Compare-Object $expected @($cases | ForEach-Object { $_.GetAttribute('name') }) -CaseSensitive).Count -ne 0 -or
+    if ($Stage -ceq 'multi') { $expected=@($expected | Select-Object -First 10)+@($Config.multidevice_expected_cases) }
+    if ($expected.Count -ne 16 -or @(Compare-Object $expected @($cases | ForEach-Object { $_.GetAttribute('name') }) -CaseSensitive).Count -ne 0 -or
         @($cases | Where-Object { $_.GetAttribute('result') -cne 'Passed' }).Count -gt 0) { throw 'Missing/duplicate/unexpected/unsuccessful canonical cases.' }
 }
 function Assert-PythonSource([string]$Root,[string]$Sha,[switch]$IgnoreSubmodule) {
@@ -135,4 +136,30 @@ function Get-PythonAllowedWrapperPaths($Record=$null) {
 }
 function Assert-PythonDiff([string[]]$Paths,[string[]]$Allowed) {
     if ($Paths.Count -eq 0 -or @($Paths | Where-Object { $_ -cnotin $Allowed }).Count -gt 0) { throw 'Empty or out-of-scope promotion diff.' }
+}
+
+# Require independently enumerated single- and multi-device runtime evidence.
+function Assert-PythonMultiStageEvidence([string]$Root,$Single,$Config) {
+    if ($Single.stage -cne 'single') { throw 'Root evidence must identify the single stage.' }
+    $multiRoot = Join-Path $Root 'multi'
+    foreach ($name in @('evidence.json','results.xml','dotnet.log','projection.json')) {
+        if (!(Test-Path -LiteralPath (Join-Path $multiRoot $name) -PathType Leaf)) { throw "Missing multi-stage evidence: $name" }
+    }
+    $multi = Get-Content (Join-Path $multiRoot 'evidence.json') -Raw | ConvertFrom-Json
+    Assert-PythonSameCandidate $multi.candidate $Single.candidate
+    foreach ($field in @('schema','execution','role','mode','wrapper_sha','fixture_sha','fixture_sha256','sdk','target_framework','test_framework','run_repository','run_id','run_sha','projection_sha256','python','pythonnet','python_executed')) {
+        if ($multi.$field -cne $Single.$field) { throw "Multi-stage evidence differs: $field" }
+    }
+    $singleCli=$Single.PSObject.Properties['cli_sha']
+    $multiCli=$multi.PSObject.Properties['cli_sha']
+    if ([bool]$singleCli -ne [bool]$multiCli -or ($singleCli -and $singleCli.Value -cne $multiCli.Value)) { throw 'Multi-stage paired CLI source differs.' }
+    if ($Single.role -ceq 'cli' -and (!$multiCli -or $multiCli.Value -cnotmatch '^[0-9a-f]{40}$')) { throw 'Multi-stage CLI source is missing.' }
+    if ($Single.role -ceq 'ros' -and ($multi.ros_sha -cnotmatch '^[0-9a-f]{40}$' -or $multi.ros_sha -cne $Single.ros_sha)) { throw 'Multi-stage ROS source differs.' }
+    if ($multi.stage -cne 'multi' -or $multi.discovered -ne 16 -or $multi.executed -ne 16 -or $multi.passed -ne 16 -or
+        $multi.failed -ne 0 -or $multi.skipped -ne 0 -or $multi.assertion_expressions -ne 20) { throw 'Incomplete multi-stage runtime evidence.' }
+    foreach ($pair in @(@('results.xml','results_sha256'),@('dotnet.log','log_sha256'))) {
+        if ((Get-FileHash -LiteralPath (Join-Path $multiRoot $pair[0])).Hash.ToLowerInvariant() -cne $multi.($pair[1])) { throw 'Multi-stage content hash mismatch.' }
+    }
+    if ((Get-FileHash -LiteralPath (Join-Path $multiRoot 'projection.json')).Hash -cne (Get-FileHash -LiteralPath (Join-Path $Root 'projection.json')).Hash) { throw 'Multi-stage package projection differs.' }
+    Assert-PythonResults (Join-Path $multiRoot 'results.xml') $Config -DotNet -Stage multi
 }
