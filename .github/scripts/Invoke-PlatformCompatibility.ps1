@@ -30,6 +30,7 @@ if($Mode -ceq 'committed') {
     $tests=Resolve-PythonTestSource $WrapperRoot $WrapperSha (Join-Path $WrapperRoot '.github/python-ci.json') $TestRoot $TestSha $TestRepository $TestSelectionId
 }
 Assert-PythonSource $WrapperRoot $WrapperSha
+if($Mode -ceq 'committed' -and $CliRoot){Assert-PythonOrdinaryCliPair $CliRoot $CliSha $WrapperSha}
 
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
 if (Test-Path -LiteralPath $OutputRoot) { throw 'Platform output must be new.' }
@@ -124,6 +125,7 @@ if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
 Assert-PythonProjection $stagedPayload $projection
 Assert-PythonProjection $payload $projection
 Assert-PythonSource $WrapperRoot $WrapperSha
+if($Mode -ceq 'committed' -and $CliRoot){Assert-PythonOrdinaryCliPair $CliRoot $CliSha $WrapperSha}
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
 if($Mode -ceq 'committed'){Assert-PythonProfileTestSource $tests}else{Assert-PythonTestSource $tests}
 if ($IsMacOS -and $contract -ceq 'legacy-v1') { Write-Output 'UNSUPPORTED: exact legacy payload does not declare macOS BLE; no BLE support is claimed.' }

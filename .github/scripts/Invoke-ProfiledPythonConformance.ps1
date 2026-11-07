@@ -27,6 +27,7 @@ if($ToolsRoot -or $ToolsSha) {
     $config=Read-PythonProfileProductConfig $ConfigPath
 }
 Assert-PythonSource $WrapperRoot $WrapperSha
+if($Mode -ceq 'committed' -and $CliRoot){Assert-PythonOrdinaryCliPair $CliRoot $CliSha $WrapperSha}
 if($Role -ceq 'cli' -or $Mode -ceq 'candidate'){
     if(!$CliRoot -or !$CliSha){throw 'CLI/candidate validation requires exact paired CLI source.'}
     Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule
@@ -101,6 +102,7 @@ foreach ($name in @('WSS_Core_Interface.dll','Newtonsoft.Json.dll','System.Secur
 }
 Assert-PythonProjection $projectionRoot $projection
 Assert-PythonSource $WrapperRoot $WrapperSha
+if($Mode -ceq 'committed' -and $CliRoot){Assert-PythonOrdinaryCliPair $CliRoot $CliSha $WrapperSha}
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
 Assert-PythonProfileTestSource $tests
 $inputs=Get-Content -LiteralPath (Join-Path $harness 'conformance-inputs.json') -Raw | ConvertFrom-Json
