@@ -108,6 +108,51 @@ class ConfigurationReloadTests(unittest.TestCase):
         self.assertEqual(1, self.controller.GetCoreConfigCTRL().MaxWss)
         self.output(lambda: self.controller.StimWithMode("ch2", .5), 100, 2)
 
+    def test_failed_construction_retains_transport_until_cleanup_succeeds(self):
+        snapshot = self.controller._current_snapshot()
+        create_transport = self.controller._create_transport
+
+        class CandidateTransport:
+            disposals = 0
+            def Dispose(self):
+                self.disposals += 1
+                if self.disposals == 1:
+                    raise RuntimeError("injected cleanup failure")
+
+        class SnapshotFailure:
+            builds = 0
+            def BuildAndInitialize(self, *args):
+                self.builds += 1
+                if self.builds == 1:
+                    raise RuntimeError("injected construction failure")
+                return snapshot.BuildAndInitialize(*args)
+            def __getattr__(self, name):
+                return getattr(snapshot, name)
+
+        transport = CandidateTransport()
+        request = SnapshotFailure()
+        created = []
+        def create():
+            created.append(True)
+            return transport if len(created) == 1 else create_transport()
+
+        # Inject only at the factory boundary; retry/cleanup remains production code.
+        self.controller._create_transport = create
+        self.controller._pending_reload = request
+        with self.assertRaisesRegex(RuntimeError, "construction failure"):
+            self.controller.RetryReload()
+        (self.root / "stimConfig.json").write_text("changed after staging", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "cleanup failure"):
+            self.controller.RetryReload()
+        self.assertFalse(self.controller.Started())
+        self.assertEqual(1, len(created))
+        self.controller.RetryReload()
+        self.wait(self.controller.Started)
+        self.assertEqual(2, transport.disposals)
+        self.assertEqual(2, len(created))
+        self.assertIsNone(self.controller.LastReloadError)
+        self.output(lambda: self.controller.StimWithMode("ch2", .5), 100, 2)
+
     @staticmethod
     def write_core(directory, devices):
         (directory / "stimConfig.json").write_text(json.dumps({"maxWSS": devices,

@@ -80,6 +80,7 @@ class StimulationController:
         self._snapshot = None
         self._pending_reload = None
         self._retired = None
+        self._retired_transport = None
         self.LastReloadError = None
         self._wss = None
         self._basic_wss = None
@@ -111,26 +112,28 @@ class StimulationController:
             if self._wss is not None:
                 return
 
-            if self._retired is not None or self._pending_reload is not None:
+            if (self._retired is not None or self._retired_transport is not None
+                    or self._pending_reload is not None):
                 raise RuntimeError("RetryReload or Shutdown must complete before initialization.")
             self._load_dotnet()
             self._install_log_sink()
 
-            core = self._create_core()
-            params_layer = self._net_types["StimParamsLayer"](
-                core, self._startup_path
-            )
-            model_layer = self._net_types["ModelParamsLayer"](
-                params_layer, self._startup_path
-            )
-
-            self._wss = model_layer
-            self._basic_supported, self._basic_wss = self._try_get_basic(self._wss)
-
             try:
+                core = self._create_core()
+                params_layer = self._net_types["StimParamsLayer"](
+                    core, self._startup_path
+                )
+                model_layer = self._net_types["ModelParamsLayer"](
+                    params_layer, self._startup_path
+                )
+
+                self._wss = model_layer
+                self._basic_supported, self._basic_wss = self._try_get_basic(self._wss)
+
                 self._wss.Initialize()
                 self._snapshot = self._net_types["WssConfigurationSnapshot"].ReadDefaults(
                     self._startup_path).CaptureCurrent(self._wss)
+                self._retired_transport = None
                 self.LastReloadError = None
                 self._ensure_tick_loop()
             except Exception:
@@ -190,16 +193,22 @@ class StimulationController:
         if self._wss is not None:
             self._retired = self._wss
             self._wss = None
+        if self._transport is not None:
+            self._retired_transport = self._transport
         self._basic_wss = None
         self._basic_supported = False
         self._transport = None
         self.started = False
 
     def _cleanup_retired(self):
-        if self._retired is not None:
+        if self._retired is not None or self._retired_transport is not None:
             try:
-                self._retired.Dispose()
+                if self._retired is not None:
+                    self._retired.Dispose()
+                else:
+                    self._retired_transport.Dispose()
                 self._retired = None
+                self._retired_transport = None
             except Exception as error:
                 self.LastReloadError = error
                 raise
@@ -221,6 +230,9 @@ class StimulationController:
         try:
             self._cleanup_retired()
             transport = self._create_transport()
+            # Core can fail before returning its partial owner. Keep the transport
+            # until publication or successful explicit cleanup.
+            self._retired_transport = transport
             options = self._net_types["WssStimulationCoreOptions"]()
             options.ConfigPath = self._startup_path
             options.MaxSetupTries = self._config.max_setup_tries
@@ -228,6 +240,7 @@ class StimulationController:
                 transport, options, self._net_types["WssConfigurationLayer"].Model))
             self._basic_supported, self._basic_wss = self._try_get_basic(stack)
             self._transport = transport
+            self._retired_transport = None
             self._wss = stack
             self._snapshot = snapshot
             self._pending_reload = None
