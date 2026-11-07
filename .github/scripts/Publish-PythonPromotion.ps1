@@ -8,9 +8,8 @@ $role=$prepared.role
 if ($role -ceq 'wrapper') { $repo=$PythonWrapperRepository }
 else { $application=Get-PythonApplication $role; $repo=$application.repository }
 if ($repo -cne $env:GITHUB_REPOSITORY) { throw 'Wrong publication repository.' }
-$config=Read-PythonConfig (Join-Path $RepositoryRoot '.github/python-ci.json') -Channel (Get-WssCiChannel)
-if (!$config.baseline_ready -or $config.automated_execution -cne 'pythonnet') { throw 'Approved .NET promotion baseline required.' }
 $approval=Read-PythonApproval (Join-Path $WorkRoot 'approval.json')
+$config=Resolve-PythonPromotionConfig $RepositoryRoot $role $approval $prepared.wrapper_merge_sha
 if ($role -cin @('wrapper','ros')) { Assert-PythonFanoutApproval $approval }
 Assert-PythonApproval $approval (Join-Path $WorkRoot 'publication-evidence') $config
 Assert-PythonSource $RepositoryRoot $prepared.source_sha -IgnoreSubmodule
