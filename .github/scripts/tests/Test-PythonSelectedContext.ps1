@@ -3,6 +3,9 @@ $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('python-context-contract-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $temp
+$temp=(& python -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())' $temp).Trim()
+$null=New-Item -ItemType Directory -Path (Join-Path $temp 'core')
+'core fixture' | Set-Content (Join-Path $temp 'core/code.mjs')
 $rootsPath=Join-Path $temp 'roots.json'
 $roots=@{selection_id=('a'*64);test_root=(Join-Path $temp 'tests');products=@(@{repository='cwru-non-academic/Python_WSS_Integration_Lib';commit=('b'*40);path=(Join-Path $temp 'wrapper')},@{repository='cwru-non-academic/CSharp_WSS_Integration_Lib';commit=('c'*40);path=(Join-Path $temp 'fixture')},@{repository='cwru-non-academic/CLI_Python_WSS_Application';commit=('d'*40);path=(Join-Path $temp 'cli')})}
 $roots | ConvertTo-Json -Depth 8 | Set-Content $rootsPath
@@ -25,6 +28,10 @@ function Invoke-SelectedPythonRunner($Options) {
         $null=New-Item -ItemType Directory -Path $Options.OutputRoot -Force
         '{"profile":"legacy-v1"}' | Set-Content (Join-Path $Options.OutputRoot 'evidence.json')
         foreach($file in @('results.xml','dotnet.log','projection.json')){'baseline proof' | Set-Content (Join-Path $Options.OutputRoot $file)}
+    } elseif($script:failure -ceq 'mutate-core') {
+        $probe=Join-Path $temp 'mutate-core.ps1'
+        'param([string]$EvidencePath); "tampered" | Set-Content -LiteralPath $EvidencePath' | Set-Content $probe
+        Invoke-CredentialFreeSelectedPowerShell $probe @{EvidencePath=(Join-Path $temp 'core/code.mjs')}
     } elseif($script:failure -ceq 'mutate-baseline') {
         $probe=Join-Path $temp 'mutate-baseline.ps1'
         'param([string]$EvidencePath); "tampered" | Set-Content -LiteralPath $EvidencePath' | Set-Content $probe
@@ -43,7 +50,7 @@ $baseline=$runnerOptions[0];$selected=$runnerOptions[1]
 if($baseline.SelectionEnabledCampaign -or $selected.SelectionEnabledCampaign){throw 'Run-level context forced modern profile.'}
 foreach($key in @('WrapperRoot','WrapperSha','ConfigPath','Mode','Role','PythonExe','Stage')){if($baseline[$key] -cne $selected[$key]){throw "Product/runtime input changed: $key"}}
 if($baseline.ContainsKey('TestRoot') -or $selected.TestSha -cne ('e'*40) -or $selected.TestSelectionId -cne ('a'*64) -or $selected.Stage -cne 'all'){throw 'Selected tuple or mandatory default coverage changed.'}
-foreach($failure in @('inspect','baseline','selected','mutate-baseline')) {
+foreach($failure in @('inspect','baseline','selected','mutate-baseline','mutate-core')) {
     $script:failure=$failure;$events.Clear();$runnerOptions.Clear();$rejected=$false
     try { Invoke-PythonContextTest @options } catch { $rejected=$true }
     if(!$rejected -or $events.Contains('evidence')){throw "Failure emitted selection evidence: $failure"}
@@ -66,6 +73,7 @@ $isolated=Join-Path $temp 'isolated';$null=New-Item -ItemType Directory -Path $i
 Copy-Item (Join-Path $repo '.github/scripts/PythonSelectedContext.ps1') $isolated
 Copy-Item (Join-Path $repo '.github/scripts/SelectedTestContext.ps1') $isolated
 Copy-Item (Join-Path $repo '.github/scripts/SelectedProcessIsolation.ps1') $isolated
+Copy-Item (Join-Path $repo '.github/scripts/SelectedParentSnapshot.ps1') $isolated
 $child=@('param([string]$WrapperRoot)', 'foreach($name in @("GH_TOKEN","GITHUB_TOKEN","WSS_TEST_VARIABLE_READ_TOKEN","SAMPLE_SECRET","GITHUB_OUTPUT")){if([Environment]::GetEnvironmentVariable($name)){throw "Authentication token leaked into test child."}}','if(Get-Variable saved -ErrorAction SilentlyContinue){throw "Parent saved credential scope leaked."}','Write-Output "PASS: test child has no authentication token or saved parent scope."')
 $child | Set-Content (Join-Path $isolated 'Invoke-ProfiledPythonConformance.ps1')
 . (Join-Path $isolated 'PythonSelectedContext.ps1')
