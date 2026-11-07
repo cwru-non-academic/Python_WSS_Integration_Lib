@@ -21,31 +21,45 @@ function Invoke-SelectedPythonRunner($Options) {
     $kind=if($Options.ContainsKey('TestRoot')){'selected'}else{'baseline'}
     $script:events.Add($kind);$script:runnerOptions.Add($Options.Clone())
     if($kind -ceq $script:failure){throw "Injected $kind failure"}
+    if($kind -ceq 'baseline') {
+        $null=New-Item -ItemType Directory -Path $Options.OutputRoot -Force
+        '{"profile":"legacy-v1"}' | Set-Content (Join-Path $Options.OutputRoot 'evidence.json')
+        foreach($file in @('results.xml','dotnet.log','projection.json')){'baseline proof' | Set-Content (Join-Path $Options.OutputRoot $file)}
+    } elseif($script:failure -ceq 'mutate-baseline') {
+        $probe=Join-Path $temp 'mutate-baseline.ps1'
+        'param([string]$EvidencePath); "tampered" | Set-Content -LiteralPath $EvidencePath' | Set-Content $probe
+        Invoke-CredentialFreeSelectedPowerShell $probe @{EvidencePath=(Join-Path (Join-Path (Split-Path $Options.OutputRoot -Parent) 'baseline') 'results.xml')}
+    }
+}
+function Invoke-PythonContextTest {
+    param($CoreRoot,$ContextPath,$RootsPath,$WorkRoot,$Mode='committed',$ArtifactRoot='',$CandidatePath='')
+    $arguments=@{CoreRoot=$CoreRoot;ContextPath=$ContextPath;RootsPath=$RootsPath;WorkRoot=($WorkRoot+'-'+[guid]::NewGuid().ToString('N'));Mode=$Mode;ArtifactRoot=$ArtifactRoot;CandidatePath=$CandidatePath}
+    Invoke-PythonSelectedWithContext @arguments
 }
 $options=@{CoreRoot=(Join-Path $temp 'core');ContextPath=(Join-Path $temp 'context.json');RootsPath=$rootsPath;WorkRoot=(Join-Path $temp 'work')}
-Invoke-PythonSelectedWithContext @options
+Invoke-PythonContextTest @options
 if(($events -join ',') -cne 'inspect,baseline,selected,evidence'){throw 'Baseline/selected/authentication ordering changed.'}
 $baseline=$runnerOptions[0];$selected=$runnerOptions[1]
 if($baseline.SelectionEnabledCampaign -or $selected.SelectionEnabledCampaign){throw 'Run-level context forced modern profile.'}
 foreach($key in @('WrapperRoot','WrapperSha','ConfigPath','Mode','Role','PythonExe','Stage')){if($baseline[$key] -cne $selected[$key]){throw "Product/runtime input changed: $key"}}
 if($baseline.ContainsKey('TestRoot') -or $selected.TestSha -cne ('e'*40) -or $selected.TestSelectionId -cne ('a'*64) -or $selected.Stage -cne 'all'){throw 'Selected tuple or mandatory default coverage changed.'}
-foreach($failure in @('inspect','baseline','selected')) {
+foreach($failure in @('inspect','baseline','selected','mutate-baseline')) {
     $script:failure=$failure;$events.Clear();$runnerOptions.Clear();$rejected=$false
-    try { Invoke-PythonSelectedWithContext @options } catch { $rejected=$true }
+    try { Invoke-PythonContextTest @options } catch { $rejected=$true }
     if(!$rejected -or $events.Contains('evidence')){throw "Failure emitted selection evidence: $failure"}
 }
 $script:failure='';$events.Clear();$runnerOptions.Clear()
-Invoke-PythonSelectedWithContext @options -Mode candidate -ArtifactRoot (Join-Path $temp 'payload') -CandidatePath (Join-Path $temp 'candidate.json')
+Invoke-PythonContextTest @options -Mode candidate -ArtifactRoot (Join-Path $temp 'payload') -CandidatePath (Join-Path $temp 'candidate.json')
 foreach($key in @('CliRoot','CliSha','ArtifactRoot','CandidatePath')){if(!$runnerOptions[0][$key] -or $runnerOptions[0][$key] -cne $runnerOptions[1][$key]){throw "Candidate input changed: $key"}}
 $rejected=$false
-try { Invoke-PythonSelectedWithContext @options -Mode candidate } catch { $rejected=$true }
+try { Invoke-PythonContextTest @options -Mode candidate } catch { $rejected=$true }
 if(!$rejected){throw 'Candidate accepted missing resolver output.'}
 $nested=$options.Clone();$nested.WorkRoot=Join-Path $roots.test_root 'output'
 $rejected=$false
 try { Invoke-PythonSelectedWithContext @nested } catch { $rejected=$true }
 if(!$rejected){throw 'Selected source allowed nested output.'}
 '{"scope":"campaign"}' | Set-Content (Join-Path $temp 'context.json')
-$runnerOptions.Clear();Invoke-PythonSelectedWithContext @options
+$runnerOptions.Clear();Invoke-PythonContextTest @options
 if(!$runnerOptions[0].SelectionEnabledCampaign -or !$runnerOptions[1].SelectionEnabledCampaign){throw 'Authenticated campaign omitted required modern profile.'}
 # Real process boundary; saved values must not be inherited through dynamic scope.
 $isolated=Join-Path $temp 'isolated';$null=New-Item -ItemType Directory -Path $isolated
