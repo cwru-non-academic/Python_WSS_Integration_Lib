@@ -1,0 +1,32 @@
+{
+  "schema": "wss-python-tests/v1",
+  "fixture_repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+  "fixture_commit": "fc427c5b8bc6534a7d02f00283830072572aa03a",
+  "fixture_sha256": "14313786be4d5c6daea28e40d2f48567cbc1356feb0f0309e0a212339137923b",
+  "dotnet_expected_cases": [
+    "AnalogStimulationThroughCSharpImplementationPassesCoreConformance",
+    "InitializationThroughCSharpImplementationPassesCoreConformance",
+    "normalized.minus-0.2",
+    "normalized.0.0",
+    "normalized.0.37",
+    "normalized.0.5",
+    "normalized.1.0",
+    "normalized.1.2",
+    "RuntimeEventEditThroughCSharpImplementationResumesConformantStreaming",
+    "StopStimulationThroughCSharpImplementationDoesNotResumeStreaming",
+    "analog.multichannel-isolation",
+    "normalized.multichannel-isolation",
+    "modeled.p.pw.single",
+    "modeled.p.pa.single",
+    "modeled.pd.pw.single",
+    "modeled.pd.pa.single"
+  ],
+  "multidevice_expected_cases": [
+    "analog.multidevice-isolation",
+    "normalized.multidevice-isolation",
+    "modeled.p.pw.multi",
+    "modeled.p.pa.multi",
+    "modeled.pd.pw.multi",
+    "modeled.pd.pa.multi"
+  ]
+}

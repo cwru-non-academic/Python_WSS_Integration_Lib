@@ -44,7 +44,15 @@ jobs:
           if ($ownSha -cne $env:GITHUB_SHA -or $wrapper -cnotmatch '^[0-9a-f]{40}$' -or ($cli -and $cli -cnotmatch '^[0-9a-f]{40}$') -or $config.fixture_commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid or raced immutable source.' }
           "wrapper=$wrapper" >> $env:GITHUB_OUTPUT
           "cli=$cli" >> $env:GITHUB_OUTPUT
-          "fixture=$($config.fixture_commit)" >> $env:GITHUB_OUTPUT
+          . ./.github/scripts/PythonContract.ps1
+          . ./.github/scripts/PythonProfiles/Contract.ps1
+          Assert-PythonSource $env:GITHUB_WORKSPACE $wrapper
+          $projection=Get-Content .github/python-candidate.json -Raw | ConvertFrom-Json
+          $payload=Join-Path $env:GITHUB_WORKSPACE $PythonPluginPath
+          Assert-PythonProjection $payload $projection
+          $profile=Resolve-WssReviewedProfile $payload $projection.candidate
+          $fixture=Get-PythonProfileContract $profile.profile
+          "fixture=$($fixture.fixture_commit)" >> $env:GITHUB_OUTPUT
           "sdk=$($config.dotnet_sdk)" >> $env:GITHUB_OUTPUT
   conformance:
     needs: [prerequisites, contracts]
@@ -83,7 +91,7 @@ jobs:
           token: ${{ github.token }}
           persist-credentials: false
       - name: Verify receiver declaration and explicit transport contracts
-        run: python -m unittest discover -s wrapper/tests -v
+        run: python -B -m unittest discover -s wrapper/tests -v
       - name: Execute canonical cases through shared production wrapper source
         shell: pwsh
         env:
@@ -118,6 +126,9 @@ jobs:
             ${{ runner.temp }}/conformance-results/results.xml
             ${{ runner.temp }}/conformance-results/dotnet.log
             ${{ runner.temp }}/conformance-results/projection.json
+            ${{ runner.temp }}/conformance-results/multi/*.json
+            ${{ runner.temp }}/conformance-results/multi/*.xml
+            ${{ runner.temp }}/conformance-results/multi/*.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -334,6 +345,7 @@ jobs:
         shell: pwsh
         run: |
           ./.github/scripts/tests/Test-PythonFanout.ps1
+          ./.github/scripts/tests/Test-CandidateReadiness.ps1
           ./.github/scripts/tests/Test-MacOSReceiver.ps1
           ./.github/scripts/tests/Test-MacOSArchitectures.ps1
           ./.github/scripts/tests/Test-CandidateProvenance.ps1
