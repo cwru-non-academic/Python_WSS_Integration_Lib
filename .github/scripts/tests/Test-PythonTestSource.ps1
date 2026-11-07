@@ -1,7 +1,7 @@
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/../PythonContract.ps1"
 $repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
-$temp=Join-Path ([IO.Path]::GetTempPath()) ('python-test-selection-'+[guid]::NewGuid().ToString('N'))
+$temp=Join-Path ((& python -c 'import pathlib,tempfile; print(pathlib.Path(tempfile.gettempdir()).resolve())').Trim()) ('python-test-selection-'+[guid]::NewGuid().ToString('N'))
 $product=Join-Path $temp 'product'; $selected=Join-Path $temp 'selected'
 $null=New-Item -ItemType Directory -Path (Join-Path $product '.github'),(Join-Path $selected 'conformance'),(Join-Path $selected '.github') -Force
 $config=Join-Path $product '.github/python-ci.json'
