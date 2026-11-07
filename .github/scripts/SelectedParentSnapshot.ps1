@@ -4,7 +4,7 @@ function Assert-SelectedRegularPath([string]$Path) {
     while($null -ne $item){
         if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Selected authority/baseline path is redirected.'}
         $parent=[IO.Path]::GetDirectoryName($item.FullName)
-        if(!$parent -or $parent -ceq $item.FullName){break}
+        if(!$parent -or [StringComparer]::Ordinal.Equals($parent,$item.FullName)){break}
         $item=Get-Item -LiteralPath $parent -Force -ErrorAction Stop
     }
 }
@@ -31,7 +31,9 @@ function Get-SelectedParentInventory([string[]]$Roots,[string[]]$Files=@()) {
         if((Get-Item -LiteralPath $file -Force).PSIsContainer){throw 'Snapshot authority input must be a regular file.'}
         $entries.Add("$file|INPUT|$((Get-FileHash -LiteralPath $file -Algorithm SHA256 -ErrorAction Stop).Hash)")
     }
-    @($entries | Sort-Object -CaseSensitive)
+    $ordered=$entries.ToArray()
+    [Array]::Sort($ordered,[StringComparer]::Ordinal)
+    $ordered
 }
 function New-SelectedParentSnapshot([string[]]$Roots,[string[]]$Files=@()) {
     @{roots=@($Roots);files=@($Files);inventory=@(Get-SelectedParentInventory $Roots $Files)}
@@ -39,5 +41,5 @@ function New-SelectedParentSnapshot([string[]]$Roots,[string[]]$Files=@()) {
 function Assert-SelectedParentSnapshot($Snapshot) {
     $current=@(Get-SelectedParentInventory $Snapshot.roots $Snapshot.files)
     if($current.Count -ne $Snapshot.inventory.Count){throw 'Selected child changed trusted parent inventory/content.'}
-    for($i=0;$i -lt $current.Count;$i++){if($current[$i] -cne $Snapshot.inventory[$i]){throw 'Selected child changed trusted parent inventory/content.'}}
+    for($i=0;$i -lt $current.Count;$i++){if(![StringComparer]::Ordinal.Equals($current[$i],$Snapshot.inventory[$i])){throw 'Selected child changed trusted parent inventory/content.'}}
 }
