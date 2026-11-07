@@ -126,6 +126,18 @@ function Assert-PythonResults([string]$Path, $Config, [switch]$DotNet, [Validate
 function Assert-PythonSource([string]$Root,[string]$Sha,[switch]$IgnoreSubmodule) {
     Assert-PythonSha $Sha
     if ((Invoke-PythonGit $Root @('rev-parse','HEAD')).Trim() -cne $Sha) { throw 'Checked-out source differs from the pinned SHA.' }
+    # Git status is insufficient when assume-unchanged or skip-worktree hides edits.
+    if (@(Invoke-PythonGit $Root @('ls-files','-v') | Where-Object { $_ -cnotmatch '^H ' }).Count) {
+        throw 'Immutable source cannot have hidden index flags (assume-unchanged or skip-worktree).'
+    }
+    # PYTHONDONTWRITEBYTECODE prevents writes, not reads: unchecked-hash bytecode
+    # can execute in place of the pinned .py file. Reject ignored executable inputs
+    # before and after runtime execution instead of trusting normal Git status.
+    $ignoredText=(Invoke-PythonGit $Root @('ls-files','--others','--ignored','--exclude-standard','-z')) -join "`n"
+    $ignored=@($ignoredText -split "`0" | Where-Object { $_ })
+    if (@($ignored | Where-Object { $_ -match '^src/' -or $_ -match '\.py[co]$' }).Count) {
+        throw 'Immutable source cannot contain ignored Python bytecode or ignored src inputs.'
+    }
     $statusArguments=@('status','--porcelain','--untracked-files=normal')
     if ($IgnoreSubmodule) { $statusArguments+='--ignore-submodules=all' }
     if (@(Invoke-PythonGit $Root $statusArguments).Count -ne 0) { throw 'Source checkout must be clean before staging the disposable harness.' }

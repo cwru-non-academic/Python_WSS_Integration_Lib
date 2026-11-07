@@ -24,3 +24,8 @@ Both stages record `test_root`, `test_sha`, `test_repository`, `test_selection_i
 and `test_contract_sha256`; paired evidence must match every field. Legacy evidence
 without these fields remains readable. Remote selection discovery and campaign
 snapshot authentication belong to the separate trusted Core bootstrap.
+
+Immutable source validation also rejects assume-unchanged/skip-worktree index
+flags, ignored Python bytecode, and ignored files under src. Disabling bytecode
+writes alone does not prevent cached code from executing. Use clean detached
+product checkouts rather than deleting caches from an active developer checkout.
