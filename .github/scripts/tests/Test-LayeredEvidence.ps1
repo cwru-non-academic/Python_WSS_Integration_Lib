@@ -6,7 +6,7 @@ $single=Get-Content (Join-Path $ResultsRoot 'evidence.json') -Raw | ConvertFrom-
 Assert-PythonMultiStageEvidence $ResultsRoot $single $config
 # Corrupt copies of real local results only; never alter uploaded acceptance files.
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('wss-layer-evidence-'+[guid]::NewGuid().ToString('N'))
-foreach ($case in @('missing','stage','source','candidate','counts','hash','inventory','projection')) {
+foreach ($case in @('missing','stage','source','cli-source','cli-presence','candidate','counts','hash','inventory','projection')) {
     $copy=Join-Path $temporary $case
     $null=New-Item -ItemType Directory -Path (Join-Path $copy 'multi') -Force
     foreach ($name in @('evidence.json','results.xml','dotnet.log','projection.json')) {
@@ -19,6 +19,8 @@ foreach ($case in @('missing','stage','source','candidate','counts','hash','inve
         'missing' { Remove-Item -LiteralPath (Join-Path $copy 'multi/dotnet.log') }
         'stage' { $proof.stage='single' }
         'source' { $proof.wrapper_sha=('f'*40) }
+        'cli-source' { $proof | Add-Member -NotePropertyName cli_sha -NotePropertyValue ('f'*40) -Force }
+        'cli-presence' { if ($proof.PSObject.Properties['cli_sha']) { $proof.PSObject.Properties.Remove('cli_sha') } else { $proof | Add-Member -NotePropertyName cli_sha -NotePropertyValue '' } }
         'candidate' { $proof.candidate.artifact_id='999999' }
         'counts' { $proof.skipped=1 }
         'hash' { $proof.results_sha256=('0'*64) }
@@ -37,4 +39,4 @@ foreach ($case in @('missing','stage','source','candidate','counts','hash','inve
     try { Assert-PythonMultiStageEvidence $copy $single $config } catch { $rejected=$true }
     if (!$rejected) { throw "Invalid layered evidence accepted: $case" }
 }
-Write-Output 'PASS: both-stage evidence and eight independent rejection checks; copied metadata only.'
+Write-Output 'PASS: both-stage evidence and ten independent rejection checks; copied metadata only.'

@@ -150,7 +150,10 @@ function Assert-PythonMultiStageEvidence([string]$Root,$Single,$Config) {
     foreach ($field in @('schema','execution','role','mode','wrapper_sha','fixture_sha','fixture_sha256','sdk','target_framework','test_framework','run_repository','run_id','run_sha','projection_sha256','python','pythonnet','python_executed')) {
         if ($multi.$field -cne $Single.$field) { throw "Multi-stage evidence differs: $field" }
     }
-    if ($Single.role -ceq 'cli' -and ($multi.cli_sha -cnotmatch '^[0-9a-f]{40}$' -or $multi.cli_sha -cne $Single.cli_sha)) { throw 'Multi-stage CLI source differs.' }
+    $singleCli=$Single.PSObject.Properties['cli_sha']
+    $multiCli=$multi.PSObject.Properties['cli_sha']
+    if ([bool]$singleCli -ne [bool]$multiCli -or ($singleCli -and $singleCli.Value -cne $multiCli.Value)) { throw 'Multi-stage paired CLI source differs.' }
+    if ($Single.role -ceq 'cli' -and (!$multiCli -or $multiCli.Value -cnotmatch '^[0-9a-f]{40}$')) { throw 'Multi-stage CLI source is missing.' }
     if ($Single.role -ceq 'ros' -and ($multi.ros_sha -cnotmatch '^[0-9a-f]{40}$' -or $multi.ros_sha -cne $Single.ros_sha)) { throw 'Multi-stage ROS source differs.' }
     if ($multi.stage -cne 'multi' -or $multi.discovered -ne 16 -or $multi.executed -ne 16 -or $multi.passed -ne 16 -or
         $multi.failed -ne 0 -or $multi.skipped -ne 0 -or $multi.assertion_expressions -ne 20) { throw 'Incomplete multi-stage runtime evidence.' }
