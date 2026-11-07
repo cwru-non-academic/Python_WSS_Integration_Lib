@@ -57,6 +57,13 @@ $expectedReasons=@{
     'missing-multi'='Candidate promotion requires complete sixteen-case single and multidevice contracts.'
     'duplicate-cases'='Candidate promotion requires complete sixteen-case single and multidevice contracts.'
     'target-mutation'='Source checkout must be clean before staging the disposable harness.'
+    'untracked-policy'='Target promotion policy must be one tracked regular-file blob.'
+    'ignored-policy'='Target promotion policy must be one tracked regular-file blob.'
+    'reparse-policy'='Target promotion policy cannot use redirected filesystem components.'
+    'index-mismatch'='Target promotion policy index differs from committed policy.'
+    'symlink-policy'='Target promotion policy must be one tracked regular-file blob.'
+    'assume-unchanged'='Immutable source cannot have hidden index flags'
+    'skip-worktree'='Immutable source cannot have hidden index flags'
     'unapproved-merge'='Synthetic merged wrapper authentication rejection.'
 }
 $count=0
@@ -68,7 +75,7 @@ try {
         if(! $text.Contains($import)){throw 'Entrypoint import changed; update regression harness.'}
         $entry=[scriptblock]::Create($text.Replace($import,''))
         foreach($role in @('cli','ros')) {
-            foreach($script:case in @('valid-dev','valid-main','target-optout','wrapper-optout','target-sdk','target-python','target-channel','wrapper-channel','wrong-channel','fixture-mismatch','source-redirect','mutable-source','merge-redirect','contract-mutation','blob-mutation','path-redirect','missing-multi','duplicate-cases','target-mutation','unapproved-merge')) {
+            foreach($script:case in @('valid-dev','valid-main','target-optout','wrapper-optout','target-sdk','target-python','target-channel','wrapper-channel','wrong-channel','fixture-mismatch','source-redirect','mutable-source','merge-redirect','contract-mutation','blob-mutation','path-redirect','missing-multi','duplicate-cases','target-mutation','untracked-policy','ignored-policy','symlink-policy','reparse-policy','index-mismatch','assume-unchanged','skip-worktree','unapproved-merge')) {
                 $script:approvalChecked=$false; $script:mergeChecked=$false
                 $script:approved=$modern|ConvertFrom-Json; $script:merged=$modern|ConvertFrom-Json
                 $own=$modern|ConvertFrom-Json
@@ -101,6 +108,34 @@ try {
                 $null=& git -C $target add .
                 $null=& git -C $target -c user.name=ContractTest -c user.email=contract@example.invalid commit --quiet -m fixture
                 if($LASTEXITCODE -ne 0){throw 'Fixture creation failed.'}
+                if($case -in @('untracked-policy','ignored-policy')){
+                    $null=& git -C $target rm --cached .github/python-ci.json
+                    if($case -ceq 'ignored-policy'){'.github/python-ci.json'|Set-Content (Join-Path $target '.gitignore');$null=& git -C $target add .gitignore}
+                    $null=& git -C $target -c user.name=ContractTest -c user.email=contract@example.invalid commit --quiet -m 'Untracked policy fixture'
+                }
+                if($case -ceq 'symlink-policy'){
+                    $blob=(& git -C $target rev-parse HEAD:.github/python-ci.json).Trim()
+                    $null=& git -C $target update-index --cacheinfo "120000,$blob,.github/python-ci.json"
+                    $null=& git -C $target -c user.name=ContractTest -c user.email=contract@example.invalid commit --quiet -m 'Redirected policy fixture'
+                }
+                if($case -ceq 'index-mismatch'){
+                    Add-Content (Join-Path $target '.github/python-ci.json') ' '
+                    $null=& git -C $target add .github/python-ci.json
+                }
+                if($case -ceq 'reparse-policy'){
+                    $source=[IO.Path]::GetFullPath((Join-Path $target '.github'))
+                    $destination=[IO.Path]::GetFullPath((Join-Path $temp ([guid]::NewGuid().ToString('N'))))
+                    foreach($movePath in @($source,$destination)){
+                        if(!$movePath.StartsWith($temp+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Redirect fixture escaped isolated test root.'}
+                    }
+                    Move-Item -LiteralPath $source -Destination $destination
+                    $linkType=if($IsWindows){'Junction'}else{'SymbolicLink'}
+                    $null=New-Item -ItemType $linkType -Path $source -Target $destination
+                }
+                if($case -in @('assume-unchanged','skip-worktree')){
+                    $null=& git -C $target update-index "--$case" .github/python-ci.json
+                    Add-Content (Join-Path $target '.github/python-ci.json') ' '
+                }
                 $env:GITHUB_SHA=(& git -C $target rev-parse HEAD).Trim()
                 $env:GITHUB_ACTIONS='true';$env:GITHUB_REF="refs/heads/$channel";$env:WSS_CI_CHANNEL=$channel
                 $env:GITHUB_EVENT_NAME='workflow_dispatch';$env:GITHUB_REPOSITORY=(Get-PythonApplication $role).repository

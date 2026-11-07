@@ -347,6 +347,24 @@ function Assert-PythonMergedWrapper([string]$Sha,[string]$PrNumber,$Approval) {
     if (!(($pr.body -split "`r?`n") -ccontains $marker)) { throw 'Merged PR does not carry the exact approval.' }
 }
 
+function Get-PythonPromotionTargetConfig([string]$RepositoryRoot) {
+    $path='.github/python-ci.json'
+    $tree=@(Invoke-PythonGit $RepositoryRoot @('ls-tree','HEAD','--',$path))
+    if ($tree.Count -ne 1 -or $tree[0] -cnotmatch '^100644 blob ([0-9a-f]{40})\t\.github/python-ci\.json$') {
+        throw 'Target promotion policy must be one tracked regular-file blob.'
+    }
+    $blob=$Matches[1]
+    $index=@(Invoke-PythonGit $RepositoryRoot @('ls-files','--stage','--',$path))
+    if ($index.Count -ne 1 -or $index[0] -cne "100644 $blob 0`t$path") { throw 'Target promotion policy index differs from committed policy.' }
+    foreach ($component in @('.github',$path)) {
+        $item=Get-Item -LiteralPath (Join-Path $RepositoryRoot $component) -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Target promotion policy cannot use redirected filesystem components.' }
+    }
+    $sha=(Invoke-PythonGit $RepositoryRoot @('rev-parse','HEAD')).Trim()
+    Assert-PythonSource $RepositoryRoot $sha -IgnoreSubmodule
+    # Parse the fixed tracked Git blob, never a caller-nominated or ignored file.
+    ((Invoke-PythonGit $RepositoryRoot @('cat-file','blob',$blob)) -join "`n") | ConvertFrom-Json
+}
 # Target capability is distinct from the candidate's canonical fixture inventory.
 # Never replace a legacy application's ordinary profile with the candidate profile.
 function Assert-PythonPromotionTarget($Config,[string]$Channel) {
@@ -377,7 +395,7 @@ function Get-PythonPromotionContractData([string]$SourceSha) {
 }
 function Resolve-PythonPromotionConfig([string]$RepositoryRoot,[ValidateSet('wrapper','cli','ros')][string]$Role,$Approval,[string]$WrapperMergeSha='') {
     $channel=Get-WssCiChannel
-    $own=Get-Content -LiteralPath (Join-Path $RepositoryRoot '.github/python-ci.json') -Raw | ConvertFrom-Json
+    $own=Get-PythonPromotionTargetConfig $RepositoryRoot
     Assert-PythonPromotionTarget $own $channel
     if ($Role -ceq 'wrapper') { $config=Assert-PythonConfig $own $channel }
     else {

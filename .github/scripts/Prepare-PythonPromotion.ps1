@@ -13,7 +13,7 @@ Assert-WssCiTargetRef
 if($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch'){throw 'Promotion preparation requires an actual target workflow dispatch.'}
 if (Test-Path -LiteralPath $WorkRoot) { throw 'WorkRoot must be new.' }
 New-Item -ItemType Directory -Path $WorkRoot | Out-Null
-Assert-PythonPromotionTarget (Get-Content -LiteralPath (Join-Path $RepositoryRoot '.github/python-ci.json') -Raw | ConvertFrom-Json) (Get-WssCiChannel)
+Assert-PythonPromotionTarget (Get-PythonPromotionTargetConfig $RepositoryRoot) (Get-WssCiChannel)
 $source=(Invoke-PythonGit $RepositoryRoot @('rev-parse','HEAD')).Trim()
 Assert-PythonSource $RepositoryRoot $source -IgnoreSubmodule
 if ($source -cne $env:GITHUB_SHA) { throw 'Promotion checkout differs from trusted workflow source.' }
