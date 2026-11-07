@@ -1,12 +1,31 @@
-import {test} from 'node:test';
+import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';
+import {join,resolve,dirname} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {tmpdir} from 'node:os';
-import {runReceipt,readOnlyGh,targetPolicy} from '../receipt.mjs';
-import {CORE,CORE_JOBS,digest,bytesDigest} from '../verify.mjs';
-import {channelContext} from '../channels.mjs';
+// Generate the registered flat receiver closure, never patch managed copies in
+// the owning repository. Core is the reviewed candidate; integration source is
+// this committed candidate. This tests the real cross-origin import boundary.
+const coreRoot=resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core');
+const integrationRoot=resolve(dirname(fileURLToPath(import.meta.url)),'../../../..');
+const closure=mkdtempSync(join(tmpdir(),'wss receipt closure '));
+after(()=>rmSync(closure,{recursive:true,force:true}));
+const sync=JSON.parse(readFileSync(join(coreRoot,'tools/ci/sync-tooling.json'),'utf8'));
+for(const [destination,entry] of Object.entries(sync.files)) {
+  if(entry.repositories&&!entry.repositories.includes('Python_WSS_Integration_Lib'))continue;
+  assert.ok(['core','integration'].includes(entry.origin),'Unrecognized closure origin');
+  const source=entry.origin==='core'?coreRoot:integrationRoot;
+  const bytes=execFileSync('git',['-C',source,'show',`HEAD:${entry.path}`]);
+  const output=join(closure,destination);mkdirSync(dirname(output),{recursive:true});writeFileSync(output,bytes);
+}
+const module=name=>pathToFileURL(join(closure,'.github/scripts/wss-ci',name)).href;
+const {runReceipt,readOnlyGh,targetPolicy}=await import(module('receipt.mjs'));
+const {CORE,CORE_JOBS,digest,bytesDigest}=await import(module('verify.mjs'));
+const {channelContext}=await import(module('channels.mjs'));
+const {resolveTestSelection}=await import(module('test-selection-contract.mjs'));
+const {CAMPAIGN_TEST_POLICY,selectionRequest,selectionFields,targetTestEvidence,selectedTestArtifactName}=await import(module('campaign-test-selection.mjs'));
 const sha=n=>String(n).repeat(40);
 
 function fixture(channel='dev') {
@@ -86,4 +105,62 @@ for(const [name,mutate]of [
 ])test(`canonical main plan cannot replace receiver ${name} identity`,async()=>{
   const f=fixture('main');try{mutate(f);await assert.rejects(runReceipt(f.config,{g:f.g,env:f.env,adapter:()=>f.state.proofs}));}
   finally{f.dispose();}
+});
+
+function selectedFixture(channel='dev') {
+  const f=fixture(channel),m=f.p.manifest;
+  m.test_selection_policy={schema:CAMPAIGN_TEST_POLICY,targets:m.targets.map(t=>({id:t.id,repository:t.repository,default_test_repository:'cwru-non-academic/TestBundle',allowed_test_repositories:['cwru-non-academic/TestBundle']}))};
+  const selection=resolveTestSelection(selectionRequest(m,f.p.candidate),{head:()=>sha(7)});
+  Object.assign(f.p,selectionFields(m,f.p.candidate,selection));f.p.manifest_sha256=digest(m);
+  const {plan_id,...body}=f.p;f.p.plan_id=digest(body);f.env.PLAN_ID=f.p.plan_id;
+  const originalRun=f.g.run,originalArtifact=f.g.artifact,originalDownload=f.g.download;
+  f.state.proofs.forEach(d=>d.source_sha=sha(2));
+  f.g.run=(repo,id)=>{const r=originalRun(repo,id);return ['30','31','32'].includes(String(id))?{...r,head_sha:sha(2)}:r;};
+  f.state.selected=new Map();
+  for(const id of ['20','30','31','32']) {
+    const r=f.g.run(f.t.repository,id);
+    f.state.selected.set(id,{artifact:{id:100+Number(id),name:selectedTestArtifactName(f.t.id,r.run_attempt),expired:false,workflow_run:{id:r.id,head_sha:r.head_sha}},bytes:Buffer.from(JSON.stringify(targetTestEvidence(f.p,f.t.id)))});
+  }
+  f.g.artifact=(repo,id,name)=>name.startsWith('wss-selected-tests-')?f.state.selected.get(String(id))?.artifact:originalArtifact(repo,id,name);
+  f.g.download=(repo,id,name,files)=>name.startsWith('wss-selected-tests-')?{'evidence.json':f.state.selected.get(String(id))?.bytes}:originalDownload(repo,id,name,files);
+  return f;
+}
+for(const channel of ['dev','main'])test(`${channel} selected receipt declares only independently authenticated normal evidence`,async()=>{
+  const f=selectedFixture(channel);try {
+    const receipt=await runReceipt(f.config,{g:f.g,env:{...f.env,SELECTION_ID:'forged'},adapter:()=>f.state.proofs});
+    assert.deepEqual(receipt.selected_tests,targetTestEvidence(f.p,f.t.id));
+    assert.deepEqual(JSON.parse(readFileSync(join(f.config.outputRoot,'receipt.json'),'utf8')),receipt);
+  } finally {f.dispose();}
+});
+for(const phase of ['normal','preflight'])for(const [name,mutate] of Object.entries({
+  'missing artifact':proof=>proof.artifact=undefined,
+  'expired artifact':proof=>proof.artifact.expired=true,
+  'foreign artifact run':proof=>proof.artifact.workflow_run.id=900,
+  'foreign artifact head':proof=>proof.artifact.workflow_run.head_sha=sha(8),
+  'stale artifact attempt':proof=>proof.artifact.name=proof.artifact.name.replace('-a1','-a2'),
+  'foreign artifact target':proof=>proof.artifact.name=proof.artifact.name.replace('python-wrapper','python-cli'),
+  'missing bytes':proof=>proof.bytes=undefined,
+  'malformed bytes':proof=>proof.bytes=Buffer.from('{'),
+  'wrong selection digest':proof=>{const e=JSON.parse(proof.bytes);e.selection_id='b'.repeat(64);proof.bytes=Buffer.from(JSON.stringify(e));},
+  'wrong selected source':proof=>{const e=JSON.parse(proof.bytes);e.test_commit=sha(8);proof.bytes=Buffer.from(JSON.stringify(e));},
+  'wrong selected repository':proof=>{const e=JSON.parse(proof.bytes);e.test_repository='untrusted/tests';proof.bytes=Buffer.from(JSON.stringify(e));},
+  'extra self-attested fields':proof=>{const e=JSON.parse(proof.bytes);e.passed=true;proof.bytes=Buffer.from(JSON.stringify(e));}
+}))test(`selected receipt rejects ${phase} ${name} before output`,async()=>{
+  const f=selectedFixture();try {
+    mutate(f.state.selected.get(phase==='normal'?'20':'30'));
+    await assert.rejects(runReceipt(f.config,{g:f.g,env:f.env,adapter:()=>f.state.proofs}));
+    assert.equal(existsSync(join(f.config.outputRoot,'receipt.json')),false);
+  } finally {f.dispose();}
+});
+for(const [name,mutate] of Object.entries({
+  'unknown preflight repository':f=>f.state.proofs[0].repository='untrusted/repository',
+  'wrong frozen preflight source':f=>f.state.proofs[0].source_sha=sha(8),
+  'preflight run ID mismatch':f=>{const run=f.g.run;f.g.run=(repo,id)=>String(id)==='30'?{...run(repo,id),id:99}:run(repo,id);},
+  'artifact transport failure':f=>f.g.artifact=()=>{throw Error('403 denied');},
+  'plan selection digest mismatch':f=>{f.p.test_selection_id='b'.repeat(64);const {plan_id,...body}=f.p;f.p.plan_id=digest(body);f.env.PLAN_ID=f.p.plan_id;}
+}))test(`selected receipt rejects ${name} without trusting adapter output`,async()=>{
+  const f=selectedFixture();try {
+    mutate(f);await assert.rejects(runReceipt(f.config,{g:f.g,env:f.env,adapter:()=>f.state.proofs}));
+    assert.equal(existsSync(join(f.config.outputRoot,'receipt.json')),false);
+  } finally {f.dispose();}
 });
