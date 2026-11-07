@@ -3,8 +3,8 @@
   "branch": "dev",
   "baseline_ready": true,
   "fixture_repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
-  "fixture_commit": "02172a64c55becd5535204f46f10b4755bf3ee05",
-  "fixture_sha256": "1cdfb9448a1776011eadc9aef8356362216032013a4f268f50242746c50a0b44",
+  "fixture_commit": "fc427c5b8bc6534a7d02f00283830072572aa03a",
+  "fixture_sha256": "14313786be4d5c6daea28e40d2f48567cbc1356feb0f0309e0a212339137923b",
   "automated_execution": "pythonnet",
   "dotnet_sdk": "9.0.316",
   "dotnet_expected_cases": [
@@ -17,12 +17,26 @@
     "normalized.1.0",
     "normalized.1.2",
     "RuntimeEventEditThroughCSharpImplementationResumesConformantStreaming",
-    "StopStimulationThroughCSharpImplementationDoesNotResumeStreaming"
+    "StopStimulationThroughCSharpImplementationDoesNotResumeStreaming",
+    "analog.multichannel-isolation",
+    "normalized.multichannel-isolation",
+    "modeled.p.pw.single",
+    "modeled.p.pa.single",
+    "modeled.pd.pw.single",
+    "modeled.pd.pa.single"
   ],
   "python_version": "3.12",
   "pythonnet_version": "3.0.5",
   "channels": [
     "dev",
     "main"
+  ],
+  "multidevice_expected_cases": [
+    "analog.multidevice-isolation",
+    "normalized.multidevice-isolation",
+    "modeled.p.pw.multi",
+    "modeled.p.pa.multi",
+    "modeled.pd.pw.multi",
+    "modeled.pd.pa.multi"
   ]
 }

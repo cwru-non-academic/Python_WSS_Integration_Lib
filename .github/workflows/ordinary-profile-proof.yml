@@ -1,0 +1,152 @@
+name: Ordinary capability profile proof
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  profile:
+    name: Ordinary ${{ matrix.product.name }} (${{ matrix.platform.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        product:
+          - name: wrapper-main
+            profile: legacy-v1
+            sha: d73452ff39993f528a87ea41acbf14ae16487fe2
+            fixture: 02172a64c55becd5535204f46f10b4755bf3ee05
+            cli: ''
+          - name: wrapper-dev
+            profile: layered-v1
+            sha: 0c85874eaef0ee5990e2e5792f9bd8280522987c
+            fixture: fc427c5b8bc6534a7d02f00283830072572aa03a
+            cli: ''
+          - name: cli-main
+            profile: legacy-v1
+            sha: 6073e38bcaa8c8bc7f0f9083bef6f97ccb37c682
+            fixture: 02172a64c55becd5535204f46f10b4755bf3ee05
+            cli: 7bf00ce5fc416ff93b3d7ae68f54017ec2916f19
+          - name: cli-dev
+            profile: legacy-v1
+            sha: 1d50e7456c6526a2053e9e125c77bace30c7d4a8
+            fixture: 02172a64c55becd5535204f46f10b4755bf3ee05
+            cli: f1d510d68d2b43f7a6172aeb43494c4077111ec4
+        platform:
+          - {os: windows-2022, arch: x64}
+          - {os: ubuntu-latest, arch: x64}
+          - {os: macos-15-intel, arch: x64}
+          - {os: macos-15, arch: arm64}
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 20
+    env:
+      WSS_EXPECTED_ARCHITECTURE: ${{ matrix.platform.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.product.sha }}
+          path: product
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/CSharp_WSS_Integration_Lib
+          ref: ${{ matrix.product.fixture }}
+          path: fixture
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: matrix.product.cli != ''
+        with:
+          repository: cwru-non-academic/CLI_Python_WSS_Application
+          ref: ${{ matrix.product.cli }}
+          path: cli
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.316'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.platform.arch }}
+      - run: python -m pip install build==1.2.2.post1 pythonnet==3.0.5
+      - name: Prove identical tooling against unchanged actual products
+        shell: pwsh
+        env:
+          PRODUCT_SHA: ${{ matrix.product.sha }}
+          EXPECTED_PROFILE: ${{ matrix.product.profile }}
+        run: |
+          . ./tools/.github/scripts/PythonContract.ps1
+          . ./tools/.github/scripts/PythonProfiles/Tooling.ps1
+          $root="$env:GITHUB_WORKSPACE/product"
+          $tools="$env:GITHUB_WORKSPACE/tools"
+          $toolSha=(git -C $tools rev-parse HEAD).Trim()
+          $binding=Resolve-PythonOrdinaryTooling -ToolsRoot $tools -ToolsSha $toolSha -ConfigPath "$tools/.github/python-ci.json" -WrapperRoot $root -WrapperSha $env:PRODUCT_SHA
+          $record=Get-Content "$root/.github/python-candidate.json" -Raw | ConvertFrom-Json
+          Assert-PythonProjection "$root/Cs_Libraries" $record
+          $profile=Resolve-WssReviewedProfile "$root/Cs_Libraries" $record.candidate
+          if($profile.profile -cne $env:EXPECTED_PROFILE){throw 'Unexpected actual product capability profile.'}
+      - name: Run mandatory canonical inventory on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root="$env:GITHUB_WORKSPACE/product"
+          $sha=(git -C $root rev-parse HEAD).Trim()
+          $tools="$env:GITHUB_WORKSPACE/tools"
+          $toolSha=(git -C $tools rev-parse HEAD).Trim()
+          $cliArgs=@{}
+          if('${{ matrix.product.cli }}'){$cliArgs=@{CliRoot="$env:GITHUB_WORKSPACE/cli";CliSha='${{ matrix.product.cli }}'}}
+          if($cliArgs.Count){$cliArgs.Role="cli"}
+          ./tools/.github/scripts/Invoke-DotNetConformance.ps1 -WrapperRoot $root -WrapperSha $sha -FixtureRoot "$env:GITHUB_WORKSPACE/fixture" -ToolsRoot $tools -ToolsSha $toolSha -ConfigPath "$tools/.github/python-ci.json" @cliArgs -OutputRoot "$env:RUNNER_TEMP/profile-canonical"
+      - name: Run full installed and native platform coverage
+        shell: pwsh
+        run: |
+          $root="$env:GITHUB_WORKSPACE/product"
+          $sha=(git -C $root rev-parse HEAD).Trim()
+          $tools="$env:GITHUB_WORKSPACE/tools"
+          $toolSha=(git -C $tools rev-parse HEAD).Trim()
+          $cliArgs=@{}
+          if('${{ matrix.product.cli }}'){$cliArgs=@{CliRoot="$env:GITHUB_WORKSPACE/cli";CliSha='${{ matrix.product.cli }}'}}
+          ./tools/.github/scripts/Invoke-PlatformCompatibility.ps1 -WrapperRoot $root -WrapperSha $sha -FixtureRoot "$env:GITHUB_WORKSPACE/fixture" -OutputRoot "$env:RUNNER_TEMP/profile-platform" -ToolsRoot $tools -ToolsSha $toolSha -ConfigPath "$tools/.github/python-ci.json" @cliArgs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ordinary-profile-proof-${{ matrix.product.name }}-${{ matrix.platform.os }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/profile-canonical/*.json
+            ${{ runner.temp }}/profile-canonical/*.xml
+            ${{ runner.temp }}/profile-canonical/*.log
+            ${{ runner.temp }}/profile-canonical/multi/*.json
+            ${{ runner.temp }}/profile-canonical/multi/*.xml
+            ${{ runner.temp }}/profile-canonical/multi/*.log
+            ${{ runner.temp }}/profile-platform/*.json
+            ${{ runner.temp }}/profile-platform/*.trx
+
+  binding:
+    name: Reject invalid tooling and CLI bindings
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: d73452ff39993f528a87ea41acbf14ae16487fe2
+          path: legacy
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 0c85874eaef0ee5990e2e5792f9bd8280522987c
+          path: modern
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/CLI_Python_WSS_Application
+          ref: 7bf00ce5fc416ff93b3d7ae68f54017ec2916f19
+          path: cli
+          persist-credentials: false
+      - shell: pwsh
+        run: ./tools/.github/scripts/tests/Test-PythonToolingBinding.ps1 -LegacyRoot "$env:GITHUB_WORKSPACE/legacy" -ModernRoot "$env:GITHUB_WORKSPACE/modern" -CliRoot "$env:GITHUB_WORKSPACE/cli"
