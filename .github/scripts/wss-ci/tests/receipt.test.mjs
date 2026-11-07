@@ -12,7 +12,7 @@ const coreRoot=resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core');
 const integrationRoot=resolve(dirname(fileURLToPath(import.meta.url)),'../../../..');
 const closure=mkdtempSync(join(tmpdir(),'wss receipt closure '));
 after(()=>rmSync(closure,{recursive:true,force:true}));
-const sync=JSON.parse(readFileSync(join(coreRoot,'tools/ci/sync-tooling.json'),'utf8'));
+const sync=JSON.parse(execFileSync('git',['-C',coreRoot,'show','HEAD:tools/ci/sync-tooling.json'],{encoding:'utf8'}));
 for(const [destination,entry] of Object.entries(sync.files)) {
   if(entry.repositories&&!entry.repositories.includes('Python_WSS_Integration_Lib'))continue;
   assert.ok(['core','integration'].includes(entry.origin),'Unrecognized closure origin');
@@ -35,7 +35,7 @@ function fixture(channel='dev') {
   git('init');mkdirSync(join(root,'.github/scripts'),{recursive:true});writeFileSync(join(root,'.github/scripts/proof.ps1'),'# trusted adapter\n');writeFileSync(join(root,'.github/python-ci.json'),'{}\n');
   git('add','.');git('-c','user.name=CI','-c','user.email=ci@example.invalid','commit','-m','fixture');
   const head=git('rev-parse','HEAD'),scripts=git('rev-parse','HEAD:.github/scripts'),config=git('rev-parse','HEAD:.github/python-ci.json');
-  const manifest=JSON.parse(readFileSync(resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core',`tools/release/targets.${channel}.json`)));
+  const manifest=JSON.parse(execFileSync('git',['-C',coreRoot,'show',`HEAD:tools/release/targets.${channel}.json`],{encoding:'utf8'}));
   const id='python-wrapper',t=manifest.targets.find(t=>t.id===id);
   const zip=Buffer.from('canonical archive'),candidate={repository:CORE,commit:sha(1),run_id:'1',artifact_id:'2',archive:'WSS-Universal-ci.zip',sha256:bytesDigest(zip)};
   const body={schema:context.planSchema,channel,candidate,manifest,manifest_sha256:digest(manifest),target_snapshots:Object.fromEntries(manifest.targets.map(target=>[target.id,{head_sha:sha(2),trusted:Object.fromEntries(target.trusted_paths.map(path=>[path,target.id===id&&path==='.github/scripts'?scripts:target.id===id&&path==='.github/python-ci.json'?config:sha(3)]))}]))};
@@ -163,4 +163,8 @@ for(const [name,mutate] of Object.entries({
     mutate(f);await assert.rejects(runReceipt(f.config,{g:f.g,env:f.env,adapter:()=>f.state.proofs}));
     assert.equal(existsSync(join(f.config.outputRoot,'receipt.json')),false);
   } finally {f.dispose();}
+});
+
+test('registered candidate closure imports all shared receiver engines without source-checkout fallbacks',async()=>{
+  for(const name of ['channels.mjs','verify.mjs','github.mjs','receipt.mjs','promotion.mjs','staging.mjs','preflight.mjs','campaign-test-selection.mjs','test-selection-contract.mjs'])await import(module(name));
 });
