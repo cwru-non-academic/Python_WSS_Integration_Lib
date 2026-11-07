@@ -3,6 +3,10 @@ param(
     [Parameter(Mandatory)][string]$WrapperSha,
     [Parameter(Mandatory)][string]$FixtureRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
+    [string]$TestRoot='',
+    [string]$TestSha='',
+    [string]$TestRepository='',
+    [string]$TestSelectionId='',
     [string]$CliRoot='',
     [string]$CliSha='',
     [string]$PythonExe='python',
@@ -12,8 +16,9 @@ param(
 )
 . "$PSScriptRoot/PythonContract.ps1"
 $config = Read-PythonConfig (Join-Path $WrapperRoot '.github/python-ci.json')
+$tests=Resolve-PythonTestSource $WrapperRoot $WrapperSha (Join-Path $WrapperRoot '.github/python-ci.json') $TestRoot $TestSha $TestRepository $TestSelectionId
 Assert-PythonSource $WrapperRoot $WrapperSha
-Assert-PythonSource $FixtureRoot $config.fixture_commit
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
 if (Test-Path -LiteralPath $OutputRoot) { throw 'Platform output must be new.' }
 New-Item -ItemType Directory -Path $OutputRoot | Out-Null
@@ -57,7 +62,7 @@ $options = @('--payload',$stagedPayload,'--installed',$installed,'--contract',$c
 if ($CliRoot) { $options += '--cli' }
 Push-Location $OutputRoot
 try {
-    & $PythonExe (Join-Path $PSScriptRoot '../../conformance/platform_smoke.py') @options
+    & $PythonExe (Join-Path $tests.root 'conformance/platform_smoke.py') @options
     if ($LASTEXITCODE -ne 0) { throw 'Installed Python platform smoke failed.' }
 } finally { Pop-Location }
 # Run the identical C# platform tests against the payload consumed by Python.
@@ -95,5 +100,6 @@ Assert-PythonProjection $stagedPayload $projection
 Assert-PythonProjection $payload $projection
 Assert-PythonSource $WrapperRoot $WrapperSha
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
+Assert-PythonTestSource $tests
 if ($IsMacOS -and $contract -ceq 'legacy-v1') { Write-Output 'UNSUPPORTED: exact legacy payload does not declare macOS BLE; no BLE support is claimed.' }
-@{schema='wss-python-platform/v2'; mode=$Mode; candidate=$projection.candidate; wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$config.fixture_commit; os=[Runtime.InteropServices.RuntimeInformation]::OSDescription; projection_sha256=$projection.projection_sha256; universal_contract=$contract; architecture=$smoke.architecture; execution=$smoke.execution; platform_trx_sha256=(Get-FileHash (Join-Path $OutputRoot 'platform.trx')).Hash.ToLowerInvariant(); installed_python_smoke='passed'; ble=$smoke.ble; python_smoke_sha256=(Get-FileHash $smokeResult).Hash.ToLowerInvariant(); run_repository=$env:GITHUB_REPOSITORY; run_id=$env:GITHUB_RUN_ID; run_sha=$env:GITHUB_SHA} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $OutputRoot 'platform.json')
+@{schema='wss-python-platform/v2'; mode=$Mode; candidate=$projection.candidate; wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$tests.contract.fixture_commit; test_root=$tests.root; test_sha=$tests.sha; test_repository=$tests.repository; test_selection_id=$tests.selection_id; test_contract_sha256=$tests.contract_sha256; os=[Runtime.InteropServices.RuntimeInformation]::OSDescription; projection_sha256=$projection.projection_sha256; universal_contract=$contract; architecture=$smoke.architecture; execution=$smoke.execution; platform_trx_sha256=(Get-FileHash (Join-Path $OutputRoot 'platform.trx')).Hash.ToLowerInvariant(); installed_python_smoke='passed'; ble=$smoke.ble; python_smoke_sha256=(Get-FileHash $smokeResult).Hash.ToLowerInvariant(); run_repository=$env:GITHUB_REPOSITORY; run_id=$env:GITHUB_RUN_ID; run_sha=$env:GITHUB_SHA} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $OutputRoot 'platform.json')

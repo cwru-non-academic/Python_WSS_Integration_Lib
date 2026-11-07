@@ -150,6 +150,7 @@ function Assert-PythonMultiStageEvidence([string]$Root,$Single,$Config) {
     foreach ($field in @('schema','execution','role','mode','wrapper_sha','fixture_sha','fixture_sha256','sdk','target_framework','test_framework','run_repository','run_id','run_sha','projection_sha256','python','pythonnet','python_executed')) {
         if ($multi.$field -cne $Single.$field) { throw "Multi-stage evidence differs: $field" }
     }
+    Assert-PythonTestEvidencePair $Single $multi
     $singleCli=$Single.PSObject.Properties['cli_sha']
     $multiCli=$multi.PSObject.Properties['cli_sha']
     if ([bool]$singleCli -ne [bool]$multiCli -or ($singleCli -and $singleCli.Value -cne $multiCli.Value)) { throw 'Multi-stage paired CLI source differs.' }
@@ -163,3 +164,5 @@ function Assert-PythonMultiStageEvidence([string]$Root,$Single,$Config) {
     if ((Get-FileHash -LiteralPath (Join-Path $multiRoot 'projection.json')).Hash -cne (Get-FileHash -LiteralPath (Join-Path $Root 'projection.json')).Hash) { throw 'Multi-stage package projection differs.' }
     Assert-PythonResults (Join-Path $multiRoot 'results.xml') $Config -DotNet -Stage multi
 }
+
+. "$PSScriptRoot/PythonTestSource.ps1"
