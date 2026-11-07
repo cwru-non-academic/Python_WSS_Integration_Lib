@@ -19,6 +19,23 @@ param(
     [ValidateRange(30,1800)][int]$TimeoutSeconds=300
 )
 . "$PSScriptRoot/PythonContract.ps1"
+# Ordinary runs select complete reviewed coverage from the exact installed payload.
+# Candidate acceptance retains its established modern-only evidence contract.
+if($Mode -ceq 'committed') {
+    . "$PSScriptRoot/PythonProfiles/Contract.ps1"
+    Assert-PythonSource $WrapperRoot $WrapperSha
+    $ordinaryProjection=Get-Content -LiteralPath (Join-Path $WrapperRoot '.github/python-candidate.json') -Raw | ConvertFrom-Json
+    $ordinaryPayload=Join-Path $WrapperRoot $PythonPluginPath
+    Assert-PythonProjection $ordinaryPayload $ordinaryProjection
+    $ordinaryProfile=Resolve-WssReviewedProfile $ordinaryPayload $ordinaryProjection.candidate
+    $ordinaryContract=Get-PythonProfileContract $ordinaryProfile.profile
+    Assert-PythonSource $FixtureRoot $ordinaryContract.fixture_commit
+    $ordinary=@{}
+    foreach($key in $PSBoundParameters.Keys){if($key -cne 'FixtureRoot'){$ordinary[$key]=$PSBoundParameters[$key]}}
+    & "$PSScriptRoot/Invoke-ProfiledPythonConformance.ps1" @ordinary
+    if(!$?){throw 'Ordinary capability-profile validation failed.'}
+    return
+}
 $previousStage = $env:WSS_CONFORMANCE_STAGE
 try {
 # Ordinary and candidate callers must execute both isolated stages by default.
