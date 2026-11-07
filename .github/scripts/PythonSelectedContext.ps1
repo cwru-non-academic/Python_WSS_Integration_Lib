@@ -1,19 +1,8 @@
 . "$PSScriptRoot/SelectedTestContext.ps1"
 
+. "$PSScriptRoot/SelectedProcessIsolation.ps1"
 function Invoke-SelectedPythonRunner([hashtable]$Options) {
-    # Authentication credentials belong to trusted Core calls, never selected code.
-    # Use a child process so PowerShell's dynamic scope cannot expose saved values.
-    $names=@('GH_TOKEN','GITHUB_TOKEN','WSS_TEST_VARIABLE_READ_TOKEN')
-    $saved=@{}
-    try {
-        foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name);[Environment]::SetEnvironmentVariable($name,$null)}
-        $arguments=@('-NoLogo','-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'Invoke-DotNetConformance.ps1'))
-        foreach($key in $Options.Keys){$arguments+="-$key";$arguments+=[string]$Options[$key]}
-        & (Join-Path $PSHOME 'pwsh.exe') @arguments
-        if($LASTEXITCODE -ne 0){throw 'Mandatory or selected Python conformance failed; no selection evidence emitted.'}
-    } finally {
-        foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name])}
-    }
+    Invoke-CredentialFreeSelectedPowerShell (Join-Path $PSScriptRoot 'Invoke-ProfiledPythonConformance.ps1') $Options
 }
 
 function Invoke-PythonSelectedWithContext {
@@ -31,7 +20,9 @@ function Invoke-PythonSelectedWithContext {
     $binding=Invoke-ReviewedSelectionCore $CoreRoot inspect 'python-wrapper' $ContextPath $RootsPath
     $roots=Get-Content -LiteralPath $RootsPath -Raw | ConvertFrom-Json
     $wrapper=Get-SelectedProduct $roots 'cwru-non-academic/Python_WSS_Integration_Lib'
-    $fixture=Get-SelectedProduct $roots 'cwru-non-academic/CSharp_WSS_Integration_Lib'
+    $context=Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json
+    # Inspect authenticated this scope; a run-level selection never forces modern payload.
+    $selectionCampaign=$context.scope -ceq 'campaign'
     if(Test-Path -LiteralPath $WorkRoot){throw 'Selected validation work directory must be new.'}
     $work=[IO.Path]::GetFullPath($WorkRoot)
     foreach($source in @($roots.test_root)+@($roots.products.path)+@($CoreRoot)){
@@ -40,14 +31,14 @@ function Invoke-PythonSelectedWithContext {
             throw 'Validation output must stay outside every immutable source checkout.'
         }
     }
-    $options=@{WrapperRoot=$wrapper.path;WrapperSha=$wrapper.commit;FixtureRoot=$fixture.path;ConfigPath=(Join-Path $wrapper.path '.github/python-ci.json');OutputRoot=(Join-Path $work 'baseline');Mode=$Mode;PythonExe=$PythonExe;Role='wrapper';Stage='all'}
+    $options=@{WrapperRoot=$wrapper.path;WrapperSha=$wrapper.commit;ConfigPath=(Join-Path $wrapper.path '.github/python-ci.json');OutputRoot=(Join-Path $work 'baseline');Mode=$Mode;PythonExe=$PythonExe;Role='wrapper';Stage='all';SelectionEnabledCampaign=$selectionCampaign}
     if($Mode -ceq 'candidate'){
         if(!$ArtifactRoot -or !$CandidatePath){throw 'Candidate tests require the existing authenticated resolver output.'}
         $cli=Get-SelectedProduct $roots 'cwru-non-academic/CLI_Python_WSS_Application'
         $options.CliRoot=$cli.path;$options.CliSha=$cli.commit
         $options.ArtifactRoot=$ArtifactRoot;$options.CandidatePath=$CandidatePath
     } elseif($ArtifactRoot -or $CandidatePath){throw 'Committed tests cannot accept candidate payload overrides.'}
-    # Baseline is unchanged and mandatory. Selection adds a second suite; never replaces it.
+    # Baseline is bootstrap-owned and mandatory. Selection adds a second suite; never replaces it.
     Invoke-SelectedPythonRunner $options
     $options.OutputRoot=Join-Path $work 'selected'
     $options.TestRoot=$roots.test_root;$options.TestSha=$binding.test_commit

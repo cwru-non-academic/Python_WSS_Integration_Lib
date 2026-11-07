@@ -10,13 +10,13 @@ reviewed immutable Core tooling and coordinated consumer pins are deployed.
 `Invoke-SelectedPythonTestsWithContext.ps1` accepts CoreRoot, ContextPath,
 RootsPath, WorkRoot, Mode, optional authenticated ArtifactRoot/CandidatePath,
 and PythonExe. It calls the full locked Core `ci-test-selection.mjs inspect`
-for `python-wrapper`, executes the unchanged default 16+16 baseline, executes
-an additional selected 16+16 suite, then calls Core `evidence`. The selected tuple
+for `python-wrapper`, executes the fixed capability-appropriate baseline, executes
+an additional selected suite with the same mandatory profile, then calls Core `evidence`. The selected tuple
 comes only from authenticated inspection. Both executions use identical original
-product roots, runtime config, fixture root and candidate projection inputs.
-Each suite executes in a child process without GH_TOKEN, GITHUB_TOKEN, or
-WSS_TEST_VARIABLE_READ_TOKEN. Authentication credentials are restored only for
-the trusted post-test Core check. A failed inspect or suite cannot emit evidence.
+product roots, runtime config, bootstrap-owned canonical fixture and candidate projection inputs.
+Each suite executes in an isolated child process with credential variables, SSH
+authentication handles and GitHub command-file handles removed. Parent credentials
+and environment are never mutated; selected code cannot read saved parent scope. A failed inspect or suite cannot emit evidence.
 
 The generic evidence is the sole `evidence.json` in
 `wss-selected-tests-python-wrapper-a<attempt>`. Rich baseline and selected runtime
@@ -64,11 +64,15 @@ candidate wrapper bytes into that historical pin. If future product gitlinks are
 initialized, declare every actual child path/repository/indexed SHA in products;
 Core authenticates them independently. Never change product inputs for new tests.
 
-Currently the bridge shares one exact canonical fixture root between default and
-selected suites. The fragment explicitly rejects different fixture commits rather
-than repinning the product. Separate baseline/selected fixture dependency handling
-must be reviewed before allowing that additional difference. The trusted mandatory
-canonical fixture hash and case inventories remain fixed.
+The profiled runner verifies the exact payload projection first, then reads PE
+metadata without executing the product assembly. The approved legacy producer
+runs all ten original canonical cases; complete modern capability runs sixteen
+single plus sixteen multi cases. Missing/partial APIs fail closed. Only a Core-
+authenticated selection-enabled campaign requires modern capability; ordinary
+run-level contexts and legacy producer policies retain their original coverage.
+The selected manifest declares supported profiles but cannot select the product
+profile or weaken the bootstrap-owned fixture hashes, assertions or inventories.
+External product fixture pins are not changed to satisfy selected tests.
 
 ## Local verification and remaining activation blockers
 
@@ -78,7 +82,7 @@ source-output isolation, and a real token-free child process. These mocks are
 orchestration unit tests, not authenticated campaign acceptance evidence.
 
 Real execution with the current unchanged tooling lock is intentionally blocked.
-Before activation: finish dual-profile legacy/layered product reconciliation,
+Before activation: review dual-profile legacy/layered product reconciliation,
 land reviewed shared tooling and refreshed literal pins on both required branches,
 validate hosted durable recovery, credentials/permissions and
 all mandatory gates, then enable the coordinated policy. Do not publish local
