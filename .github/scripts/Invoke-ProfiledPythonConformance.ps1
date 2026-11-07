@@ -113,13 +113,13 @@ $projection | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Out
 
     Write-Output "PASS: $($profile.profile) ${Stage}: $caseCount canonical cases; $($contract.assertion_expressions) preserved assertions; exact product Python executed."
 }
-if($profile.profile -ceq 'layered-v1' -and $stages.Count -eq 2){
+if($profile.profile -ceq 'layered-v1' -and @($stages).Count -eq 2){
     $single=Get-Content (Join-Path $rootOutput 'evidence.json') -Raw | ConvertFrom-Json
     Assert-PythonMultiStageEvidence $rootOutput $single $contract
     $multi=Get-Content (Join-Path $rootOutput 'multi/evidence.json') -Raw | ConvertFrom-Json
     foreach($field in @('profile','producer_commit','core_dll_sha256')){if($single.$field -cne $multi.$field){throw 'Profile identity differs between mandatory stages.'}}
 }
-if($stages.Count -eq 2 -or $profile.profile -ceq 'legacy-v1'){Assert-PythonProfileEvidence $rootOutput $profile $projection}
+if(@($stages).Count -eq 2 -or $profile.profile -ceq 'legacy-v1'){Assert-PythonProfileEvidence $rootOutput $profile $projection}
 $recheck=Resolve-WssReviewedProfile $projectionRoot $candidate -SelectionEnabledCampaign:$SelectionEnabledCampaign
 if($recheck.profile -cne $profile.profile -or $recheck.core_dll_sha256 -cne $profile.core_dll_sha256){throw 'Verified product capability changed during execution.'}
 } finally {$env:WSS_CONFORMANCE_STAGE=$previousStage}
