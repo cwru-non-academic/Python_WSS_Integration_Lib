@@ -178,3 +178,9 @@ function Assert-PythonMultiStageEvidence([string]$Root,$Single,$Config) {
 }
 
 . "$PSScriptRoot/PythonTestSource.ps1"
+
+function Assert-PythonOrdinaryCliPair([string]$CliRoot,[string]$CliSha,[string]$WrapperSha) {
+    Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule
+    $entry=Invoke-PythonGit $CliRoot @('ls-tree',$CliSha,'--','external/wss-py-wrapper')
+    if($entry -cnotmatch '^160000 commit ([0-9a-f]{40})\s+external/wss-py-wrapper$' -or $Matches[1] -cne $WrapperSha){throw 'Ordinary CLI must use its exact immutable wrapper gitlink; candidate overrides require candidate mode.'}
+}
