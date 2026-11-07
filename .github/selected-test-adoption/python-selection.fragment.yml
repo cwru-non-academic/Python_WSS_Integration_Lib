@@ -22,12 +22,11 @@ jobs:
           path: bootstrap
           persist-credentials: false
           submodules: false
-      - name: Require first prerequisite attempt and actual wrapper source
+      - name: Require actual wrapper source
         shell: pwsh
         env:
           WRAPPER_SHA: ${{ needs.prerequisites.outputs.wrapper }}
         run: |
-          if ($env:GITHUB_RUN_ATTEMPT -cne '1') { throw 'Reuse the successful prerequisite when retrying dependent jobs. Full prerequisite retry requires authenticated durable-output recovery; do not resolve latest again.' }
           if ($env:GITHUB_REPOSITORY -cne 'cwru-non-academic/Python_WSS_Integration_Lib' -or $env:WRAPPER_SHA -cne $env:GITHUB_SHA) { throw 'Actual wrapper run/source required.' }
       - name: Read reviewed immutable Core lock
         id: lock
@@ -62,7 +61,7 @@ jobs:
           persist-credentials: false
           submodules: false
       - name: Freeze test selection once using repository-only variables
-        id: selection
+        id: prepare
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.source-read.outputs.token }}
@@ -79,12 +78,24 @@ jobs:
           node selection-core/tools/ci/ci-test-selection.mjs select python-wrapper $candidate "$env:RUNNER_TEMP/python-selection" $env:MODE
           if ($LASTEXITCODE -ne 0) { throw 'Authenticated test selection failed.' }
       - uses: actions/upload-artifact@v4
+        if: steps.prepare.outputs.created == 'true'
         with:
-          name: python-wrapper-test-context
+          name: ${{ steps.prepare.outputs.artifact_name }}
           path: ${{ runner.temp }}/python-selection/context.json
           if-no-files-found: error
           overwrite: false
           retention-days: 14
+
+      - name: Independently authenticate durable selection after upload or recovery
+        id: selection
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.source-read.outputs.token }}
+          WSS_CI_CHANNEL: ${{ inputs.channel }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          node selection-core/tools/ci/ci-test-selection.mjs load python-wrapper "$env:RUNNER_TEMP/selection-candidate.json" "$env:RUNNER_TEMP/python-selection-loaded" $env:MODE
+          if ($LASTEXITCODE -ne 0) { throw 'Durable selection authentication failed.' }
 
   selected-python-tests:
     needs: [prerequisites, selected-test-prerequisite, mandatory-python-gates]
@@ -127,10 +138,6 @@ jobs:
           token: ${{ steps.source-read.outputs.token }}
           persist-credentials: false
           submodules: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: python-wrapper-test-context
-          path: ${{ runner.temp }}/python-selection
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/Python_WSS_Integration_Lib
@@ -156,6 +163,20 @@ jobs:
           token: ${{ steps.source-read.outputs.token }}
           persist-credentials: false
           submodules: false
+      - name: Recover authenticated durable context without rereading settings
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.source-read.outputs.token }}
+          MODE: ${{ inputs.mode }}
+          CANDIDATE_JSON: ${{ inputs.candidate_json }}
+        run: |
+          . ./bootstrap/.github/scripts/SelectedTestContext.ps1
+          Assert-ReviewedSelectionCore "$env:GITHUB_WORKSPACE/selection-core"
+          $candidate="$env:RUNNER_TEMP/selection-candidate.json"
+          if ($env:MODE -ceq 'candidate') { $env:CANDIDATE_JSON | Set-Content $candidate }
+          else { Copy-Item product-wrapper/.github/python-candidate.json $candidate }
+          $loaded=(node selection-core/tools/ci/ci-test-selection.mjs load python-wrapper $candidate "$env:RUNNER_TEMP/python-selection" $env:MODE) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $loaded.selection_id -cne $env:WSS_TEST_SELECTION_ID) { throw 'Recovered context differs from the immutable prerequisite output.' }
       - name: Read selected fixture data without executing selected code
         id: fixture
         shell: pwsh

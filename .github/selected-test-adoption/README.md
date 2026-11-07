@@ -44,12 +44,17 @@ no inherited organization/environment `vars` context selects tests. Check the
 App's existing Variables-read grant before activation. Requesting the scoped
 short-lived token is not permission to expand its installation grants.
 
-The prerequisite freezes once and uploads create-only context.json. Dependent
-jobs use its immutable selection_id output, never an ID extracted from a file.
-Until an authenticated durable ordinary-run recovery helper is adopted, the
-prerequisite fails before selection on attempts after the first. Failed dependent
-jobs can reuse the successful prerequisite and artifact. Do not replace this
-restriction with fresh settings/branch resolution or a self-reported artifact ID.
+The prerequisite calls `select` once to prepare a durable envelope. It uploads
+only when created=true, using the helper's immutable artifact_name, then calls
+`load` to independently authenticate the durable artifact before emitting any
+selection coordinates. A retry recovers the same envelope without re-reading
+settings or branch heads. Missing/corrupt recovery evidence fails closed.
+
+Dependent jobs call `load` with the same actual candidate/mode to materialize raw
+context, verify its ID against the immutable prerequisite output, and retain that
+prerequisite ID in WSS_TEST_SELECTION_ID for inspect/evidence. They never use a
+self-reported downloaded ID as authority. Preserve actual GITHUB_WORKFLOW_REF,
+GITHUB_WORKFLOW_SHA, GITHUB_REF, and other runner identity variables unchanged.
 
 Fresh bootstrap, Core, actual product, selected test and fixture checkouts are
 separate and have persist-credentials:false. Selected gitlinks remain uninitialized.
@@ -75,6 +80,6 @@ orchestration unit tests, not authenticated campaign acceptance evidence.
 Real execution with the current unchanged tooling lock is intentionally blocked.
 Before activation: finish dual-profile legacy/layered product reconciliation,
 land reviewed shared tooling and refreshed literal pins on both required branches,
-adopt durable ordinary-run recovery, validate hosted credentials/permissions and
+validate hosted durable recovery, credentials/permissions and
 all mandatory gates, then enable the coordinated policy. Do not publish local
 synthetic IDs or treat this fragment as a completed release rollout.
