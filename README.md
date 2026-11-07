@@ -116,9 +116,7 @@ separate manual validation on the target OS.
 are receiver addresses, not a configurable host sender byte. Existing user files
 are not replaced; legacy files use the historical defaults, and custom addresses
 such as Wss1 `"0x80"` remain supported. Keep hardware-specific firmware and
-calibration settings. Stop and reconstruct/reinitialize the controller after
-changing addresses so Core creates a new address map; `LoadCoreConfigFile()` alone
-does not rebuild it.
+calibration settings. `LoadCoreConfigFile()` uses the host reset path to rebuild the address map; wait for `Started()` before sending new stimulation.
 
 `Initialize()` starts asynchronous device setup; it does not establish readiness.
 Use `Ready()`/`Started()` and the resolved `WssConfig.log_path` for diagnostics.
