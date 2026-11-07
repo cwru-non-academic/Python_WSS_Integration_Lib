@@ -15,6 +15,8 @@ param(
     [ValidateRange(30,1800)][int]$TimeoutSeconds=300
 )
 . "$PSScriptRoot/PythonContract.ps1"
+$previousStage = $env:WSS_CONFORMANCE_STAGE
+try {
 # Ordinary and candidate callers must execute both isolated stages by default.
 # Explicit single/multi remain available for focused diagnosis only.
 if ($Stage -ceq 'all') {
@@ -109,3 +111,5 @@ $evidence=[ordered]@{
 $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'evidence.json')
 $projection | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'projection.json')
 Write-Output 'PASS: Python via pythonnet through shared production commands; sixteen canonical cases, twenty unchanged assertion expressions; Production Python executed; emulator only, no terminal input or physical hardware.'
+
+} finally { $env:WSS_CONFORMANCE_STAGE = $previousStage }
