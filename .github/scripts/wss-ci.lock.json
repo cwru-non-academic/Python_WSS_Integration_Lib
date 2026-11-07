@@ -2,8 +2,8 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "7d3c50cfac12107e5eca9fc7f60381a0c019ffd3",
-  "source_ref": "refs/heads/ci/tooling/7d3c50cfac12107e5eca9fc7f60381a0c019ffd3",
+  "source_commit": "8089d59837b70508615740082f29cb9ce3974923",
+  "source_ref": "refs/heads/ci/tooling/8089d59837b70508615740082f29cb9ce3974923",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
@@ -172,6 +172,36 @@
       "origin": "core",
       "source": "tools/release/entrypoint.mjs",
       "sha256": "6096766b5a0329d933c6cbefa951ea3349a251283dd8bf34e565a0f06ffba9e0"
+    },
+    ".github/scripts/wss-ci/local-test-variable-snapshot.mjs": {
+      "origin": "core",
+      "source": "tools/release/local-test-variable-snapshot.mjs",
+      "sha256": "3f1fe61cda6686111e0509b8372bca54fb9038a010c9a354122031f2958d495f"
+    },
+    ".github/scripts/wss-ci/capture-test-variables.mjs": {
+      "origin": "core",
+      "source": "tools/ci/shared/capture-test-variables.mjs",
+      "sha256": "6e2fc9d70e2650d9711dab8e7323b195f96a049549b5bb9c96aba85fe4a3a69a"
+    },
+    ".github/workflows/test-variable-snapshot.yml": {
+      "origin": "core",
+      "source": "tools/ci/shared/test-variable-snapshot.yml",
+      "sha256": "0942f861c1ecb7f791752da6627d288d4bf542122dad7916e642b17ed581bf3f"
+    },
+    ".github/scripts/wss-ci/local-test-variable-readiness.mjs": {
+      "origin": "core",
+      "source": "tools/release/local-test-variable-readiness.mjs",
+      "sha256": "0d1c84aebf221eb6ed0d8a80023f71dfe6d7715fbcd4f5a03b35b8f96dbc42dd"
+    },
+    ".github/scripts/wss-ci/capture-test-variable-readiness.mjs": {
+      "origin": "core",
+      "source": "tools/ci/shared/capture-test-variable-readiness.mjs",
+      "sha256": "5eff58a6bd4e2f887991302d0c926c04b4cced51d08b1e2272ea9ee5dc24704a"
+    },
+    ".github/workflows/test-variable-readiness-capture.yml": {
+      "origin": "core",
+      "source": "tools/ci/shared/test-variable-readiness-capture.yml",
+      "sha256": "4aa723d2050c56c69deda6793da2ed5fcc3707cd84a3731f9a6862a56514d3a6"
     }
   }
 }
