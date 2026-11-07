@@ -7,6 +7,7 @@ This module contains the interop-heavy runtime core. The main entry point is
 from __future__ import annotations
 
 from pathlib import Path
+from functools import wraps
 import threading
 import time
 
@@ -49,6 +50,15 @@ def _resolve_log_type():
     raise RuntimeError("Unable to locate C# Log type in WSS_Core_Interface.dll.")
 
 
+def _serialized(operation):
+    """Serialize public operations with reload, reset and shutdown."""
+    @wraps(operation)
+    def invoke(self, *args, **kwargs):
+        with self._gate:
+            return operation(self, *args, **kwargs)
+    return invoke
+
+
 class StimulationController:
     """Python wrapper around the WSS .NET stimulation controller layers.
 
@@ -65,7 +75,12 @@ class StimulationController:
 
     def __init__(self, config: WssConfig) -> None:
         self._config = config
-        self._gate = threading.Lock()
+        self._gate = threading.RLock()
+        self._startup_path = str(Path(config.config_path).resolve())
+        self._snapshot = None
+        self._pending_reload = None
+        self._retired = None
+        self.LastReloadError = None
         self._wss = None
         self._basic_wss = None
         self._basic_supported = False
@@ -82,6 +97,7 @@ class StimulationController:
         """Whether the optional "Basic" .NET API is available."""
         return self._basic_supported
 
+    @_serialized
     def Initialize(self) -> None:
         """Load .NET DLLs, initialize layers, and start the tick loop.
 
@@ -95,40 +111,48 @@ class StimulationController:
             if self._wss is not None:
                 return
 
+            if self._retired is not None or self._pending_reload is not None:
+                raise RuntimeError("RetryReload or Shutdown must complete before initialization.")
             self._load_dotnet()
             self._install_log_sink()
 
             core = self._create_core()
             params_layer = self._net_types["StimParamsLayer"](
-                core, str(self._config.config_path)
+                core, self._startup_path
             )
             model_layer = self._net_types["ModelParamsLayer"](
-                params_layer, str(self._config.config_path)
+                params_layer, self._startup_path
             )
 
             self._wss = model_layer
             self._basic_supported, self._basic_wss = self._try_get_basic(self._wss)
 
-            self._wss.Initialize()
-            self._ensure_tick_loop()
+            try:
+                self._wss.Initialize()
+                self._snapshot = self._net_types["WssConfigurationSnapshot"].ReadDefaults(
+                    self._startup_path).CaptureCurrent(self._wss)
+                self.LastReloadError = None
+                self._ensure_tick_loop()
+            except Exception:
+                self._retire_active()
+                try:
+                    self._cleanup_retired()
+                except Exception:
+                    pass  # Retain the failed owner for an explicit cleanup retry.
+                raise
 
+    @_serialized
     def Shutdown(self) -> None:
         """Stop stimulation, stop the tick loop, and dispose .NET objects.
 
-        Exceptions during shutdown are logged (when possible) but do not prevent
-        the remainder of cleanup.
+        Cleanup failure propagates and retains the owner for explicit retry.
         """
         with self._gate:
+            self._pending_reload = None
             self._stop_tick_loop()
-            if self._wss is not None:
-                try:
-                    self._wss.Shutdown()
-                except Exception as ex:
-                    self._log_error(f"Error during Shutdown: {ex}")
-                try:
-                    self._wss.Dispose()
-                except Exception as ex:
-                    self._log_error(f"Error disposing stimulation core: {ex}")
+            self._retire_active()
+            self._cleanup_retired()
+            self.LastReloadError = None
 
             if self._log_reset is not None:
                 try:
@@ -142,23 +166,84 @@ class StimulationController:
             self._transport = None
             self.started = False
 
+    @_serialized
     def releaseRadio(self) -> None:
         """Backward-compatible alias for :meth:`Shutdown`."""
         self.Shutdown()
 
+    @_serialized
     def resetRadio(self) -> None:
         """Restart the .NET core without reloading DLLs.
 
-        This shuts down and re-initializes the underlying .NET object and
-        restarts the tick loop.
+        Stages edited active Core values, disposes the old stack, and constructs
+        the validated configuration before restarting the tick loop.
         """
         with self._gate:
             if self._wss is None:
                 return
-            self._stop_tick_loop()
-            self._wss.Shutdown()
-            self._wss.Initialize()
+            self._install_snapshot(self._current_snapshot().ReloadCore(), force_restart=True)
+
+    def _current_snapshot(self):
+        return self._snapshot.CaptureCurrent(self._ensure_wss())
+
+    def _retire_active(self):
+        if self._wss is not None:
+            self._retired = self._wss
+            self._wss = None
+        self._basic_wss = None
+        self._basic_supported = False
+        self._transport = None
+        self.started = False
+
+    def _cleanup_retired(self):
+        if self._retired is not None:
+            try:
+                self._retired.Dispose()
+                self._retired = None
+            except Exception as error:
+                self.LastReloadError = error
+                raise
+
+    def _install_snapshot(self, snapshot, force_restart=False):
+        if not force_restart and snapshot.HasSameCore(self._current_snapshot()):
+            snapshot.ApplyWithoutRestart(self._ensure_wss())
+            self._snapshot = snapshot
+            return
+        self._pending_reload = snapshot
+        self._complete_reload()
+
+    def _complete_reload(self):
+        snapshot = self._pending_reload
+        if snapshot is None:
+            raise RuntimeError("There is no pending reload.")
+        self._stop_tick_loop()
+        self._retire_active()
+        try:
+            self._cleanup_retired()
+            transport = self._create_transport()
+            options = self._net_types["WssStimulationCoreOptions"]()
+            options.ConfigPath = self._startup_path
+            options.MaxSetupTries = self._config.max_setup_tries
+            stack = self._net_types["IModelParamsCore"](snapshot.BuildAndInitialize(
+                transport, options, self._net_types["WssConfigurationLayer"].Model))
+            self._basic_supported, self._basic_wss = self._try_get_basic(stack)
+            self._transport = transport
+            self._wss = stack
+            self._snapshot = snapshot
+            self._pending_reload = None
+            self.LastReloadError = None
             self._ensure_tick_loop()
+        except Exception as error:
+            self.LastReloadError = error
+            raise
+
+    @_serialized
+    def RetryReload(self) -> None:
+        """Retry cleanup and installation of the validated snapshot without rereading files.
+
+        :raises RuntimeError: If no reload is pending.
+        """
+        self._complete_reload()
 
     def _ensure_tick_loop(self) -> None:
         if self._wss is None:
@@ -187,9 +272,10 @@ class StimulationController:
         if self._tick_thread is None:
             return
         self._tick_stop.set()
-        self._tick_thread.join(timeout=2)
+        self._tick_thread.join()
         self._tick_thread = None
 
+    @_serialized
     def StimulateAnalog(
         self, finger: str, PW: int, amp: int = 3, IPI: int = 10
     ) -> None:
@@ -205,6 +291,7 @@ class StimulationController:
         channel = self._finger_to_channel(finger)
         wss.StimulateAnalog(channel, PW, amp, IPI)
 
+    @_serialized
     def StartStimulation(self) -> None:
         """Broadcast a start stimulation command.
 
@@ -214,6 +301,7 @@ class StimulationController:
         wss.StartStim(self._net_types["WssTarget"].Broadcast)
         self.started = True
 
+    @_serialized
     def StopStimulation(self, targetWSS: int | None = None) -> None:
         """Broadcast a stop stimulation command.
 
@@ -223,6 +311,7 @@ class StimulationController:
         wss.StopStim(self._int_to_wss_target(targetWSS))
         self.started = False
 
+    @_serialized
     def UpdateEventRatio(self, targetWSS: int, ratio: int, eventID: int) -> None:
         """Edit an event ratio through Core's pause/edit/resume boundary."""
         self._ensure_wss()
@@ -231,12 +320,14 @@ class StimulationController:
             raise RuntimeError("Basic stimulation not supported.")
         basic.UpdateEventRatio(ratio, eventID, self._int_to_wss_target(targetWSS))
 
+    @_serialized
     def GetConformance(self):
         """Return Core's evaluator for the explicitly selected emulator, or None."""
         if not self._config.conformance_mode or self._transport is None:
             return None
         return self._transport.Conformance
 
+    @_serialized
     def Save(self, targetWSS: int | None = None) -> None:
         basic = self._require_basic()
         if basic is None:
@@ -244,6 +335,7 @@ class StimulationController:
         target = self._int_to_wss_target(targetWSS)
         basic.Save(target)
 
+    @_serialized
     def load(self, targetWSS: int | None = None) -> None:
         basic = self._require_basic()
         if basic is None:
@@ -251,12 +343,14 @@ class StimulationController:
         target = self._int_to_wss_target(targetWSS)
         basic.Load(target)
 
+    @_serialized
     def request_Configs(self, targetWSS: int, command: int, id: int) -> None:
         basic = self._require_basic()
         if basic is None:
             return
         basic.Request_Configs(command, id, self._int_to_wss_target(targetWSS))
 
+    @_serialized
     def updateWaveform(self, *args) -> None:
         basic = self._require_basic()
         if basic is None:
@@ -310,12 +404,14 @@ class StimulationController:
 
         raise ValueError("Unsupported updateWaveform signature.")
 
+    @_serialized
     def loadWaveform(self, fileName: str, eventID: int) -> None:
         basic = self._require_basic()
         if basic is None:
             return
         basic.LoadWaveform(fileName, eventID)
 
+    @_serialized
     def WaveformSetup(self, wave, eventID: int, targetWSS: int | None = None) -> None:
         basic = self._require_basic()
         if basic is None:
@@ -323,6 +419,7 @@ class StimulationController:
         target = self._int_to_wss_target(targetWSS)
         basic.WaveformSetup(wave, eventID, target)
 
+    @_serialized
     def UpdateIPD(self, ipd: int, eventID: int, targetWSS: int | None = None) -> None:
         basic = self._require_basic()
         if basic is None:
@@ -330,6 +427,7 @@ class StimulationController:
         target = self._int_to_wss_target(targetWSS)
         basic.UpdateIPD(ipd, eventID, target)
 
+    @_serialized
     def StimulateNormalized(self, finger: str, magnitude: float) -> None:
         """Stimulate a channel with a normalized magnitude.
 
@@ -341,83 +439,98 @@ class StimulationController:
         ch = self._finger_to_channel(finger)
         wss.StimulateNormalized(ch, magnitude)
 
+    @_serialized
     def GetStimIntensity(self, finger: str) -> int:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         return int(wss.GetStimIntensity(ch))
 
+    @_serialized
     def SaveParamsJson(self) -> None:
         """Persist stimulation parameters JSON via the .NET layer."""
         self._ensure_wss().SaveParamsJson()
 
+    @_serialized
     def LoadParamsJson(self, pathOrDir: str | None = None) -> None:
         """Load stimulation parameters JSON via the .NET layer.
 
         :param pathOrDir: Optional file/directory path interpreted by the .NET layer.
         """
-        wss = self._ensure_wss()
-        if pathOrDir is None:
-            wss.LoadParamsJson()
-        else:
-            wss.LoadParamsJson(pathOrDir)
+        current = self._current_snapshot()
+        snapshot = current.ReloadDefaults() if pathOrDir is None else current.Reload(str(pathOrDir))
+        self._install_snapshot(snapshot)
 
+    @_serialized
     def AddOrUpdateStimParam(self, key: str, value: float) -> None:
         self._ensure_wss().AddOrUpdateStimParam(key, value)
 
+    @_serialized
     def GetStimParam(self, key: str) -> float:
         return self._ensure_wss().GetStimParam(key)
 
+    @_serialized
     def TryGetStimParam(self, key: str):
         return self._ensure_wss().TryGetStimParam(key)
 
+    @_serialized
     def GetAllStimParams(self):
         return self._ensure_wss().GetAllStimParams()
 
+    @_serialized
     def SetChannelAmp(self, finger: str, mA: float) -> None:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         wss.SetChannelAmp(ch, mA)
 
+    @_serialized
     def SetChannelPWMin(self, finger: str, us: int) -> None:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         wss.SetChannelPWMin(ch, us)
 
+    @_serialized
     def SetChannelPWMax(self, finger: str, us: int) -> None:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         wss.SetChannelPWMax(ch, us)
 
+    @_serialized
     def SetChannelIPI(self, finger: str, ms: int) -> None:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         wss.SetChannelIPI(ch, ms)
 
+    @_serialized
     def GetChannelAmp(self, finger: str) -> float:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         return wss.GetChannelAmp(ch)
 
+    @_serialized
     def GetChannelPWMin(self, finger: str) -> int:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         return wss.GetChannelPWMin(ch)
 
+    @_serialized
     def GetChannelPWMax(self, finger: str) -> int:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         return wss.GetChannelPWMax(ch)
 
+    @_serialized
     def GetChannelIPI(self, finger: str) -> int:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         return wss.GetChannelIPI(ch)
 
+    @_serialized
     def IsFingerValid(self, finger: str) -> bool:
         wss = self._ensure_wss()
         ch = self._finger_to_channel(finger)
         return wss.IsChannelInRange(ch)
 
+    @_serialized
     def StimWithMode(self, finger: str, magnitude: float) -> None:
         """Stimulate using the active mode/model parameters.
 
@@ -428,6 +541,7 @@ class StimulationController:
         ch = self._finger_to_channel(finger)
         wss.StimWithMode(ch, magnitude)
 
+    @_serialized
     def UpdateChannelParams(
         self, finger: str, max_val: int, min_val: int, amp: int
     ) -> None:
@@ -449,26 +563,32 @@ class StimulationController:
         base_key = f"stim.ch.{ch}"
         wss.AddOrUpdateStimParam(f"{base_key}.maxPW", max_val)
         wss.AddOrUpdateStimParam(f"{base_key}.minPW", min_val)
-        wss.AddOrUpdateStimParam(f"{base_key}.amp", amp)
+        wss.AddOrUpdateStimParam(f"{base_key}.defaultPA", amp)
 
+    @_serialized
     def isModeValid(self) -> bool:
         return self._ensure_wss().IsModeValid()
 
+    @_serialized
     def Ready(self) -> bool:
         return self._wss.Ready() if self._wss is not None else False
 
+    @_serialized
     def Started(self) -> bool:
         return self._wss.Started() if self._wss is not None else False
 
+    @_serialized
     def GetModelConfigCTRL(self):
         return self._ensure_wss().GetModelConfigController()
 
+    @_serialized
     def GetCoreConfigCTRL(self):
         return self._ensure_wss().GetCoreConfigController()
 
+    @_serialized
     def LoadCoreConfigFile(self) -> None:
-        """Reload the core configuration file via the .NET layer."""
-        self._ensure_wss().LoadConfigFile()
+        """Stage the active Core file and reconstruct through the radio reset path."""
+        self.resetRadio()
 
     def _load_dotnet(self) -> None:
         dlls = collect_dlls(self._config.cs_lib_dir)
@@ -483,6 +603,8 @@ class StimulationController:
                 CoreConfigController,
                 WssStimulationCore,
                 WssStimulationCoreOptions,
+                WssConfigurationSnapshot,
+                WssConfigurationLayer,
                 WaveformBuilder,
                 WssTarget,
             )
@@ -492,19 +614,22 @@ class StimulationController:
                 TestModeTransport,
                 TestModeTransportOptions,
             )
-            from Wss.ModelModule import ModelConfigController, ModelParamsLayer  # type: ignore
+            from Wss.ModelModule import IModelParamsCore, ModelConfigController, ModelParamsLayer  # type: ignore
             from Wss.CalibrationModule import StimParamsLayer  # type: ignore
 
             self._net_types = dict(
                 CoreConfigController=CoreConfigController,
                 WssStimulationCore=WssStimulationCore,
                 WssStimulationCoreOptions=WssStimulationCoreOptions,
+                WssConfigurationSnapshot=WssConfigurationSnapshot,
+                WssConfigurationLayer=WssConfigurationLayer,
                 WaveformBuilder=WaveformBuilder,
                 WssTarget=WssTarget,
                 SerialPortTransport=SerialPortTransport,
                 SerialPortTransportOptions=SerialPortTransportOptions,
                 TestModeTransport=TestModeTransport,
                 TestModeTransportOptions=TestModeTransportOptions,
+                IModelParamsCore=IModelParamsCore,
                 ModelConfigController=ModelConfigController,
                 ModelParamsLayer=ModelParamsLayer,
                 StimParamsLayer=StimParamsLayer,
@@ -553,7 +678,7 @@ class StimulationController:
         transport = self._create_transport()
         self._transport = transport
         core_class = self._net_types["WssStimulationCore"]
-        config_path = str(self._config.config_path)
+        config_path = self._startup_path
         if "WssStimulationCoreOptions" in self._net_types:
             options = self._net_types["WssStimulationCoreOptions"]()
             options.ConfigPath = config_path
