@@ -39,6 +39,26 @@ function Assert-PythonMergedApplicationPreflight($Approval,$Role,$WrapperSha,$Ap
        $WrapperSha -cne ('b'*40) -or $ApplicationSha -cne $env:GITHUB_SHA -or $RunId -cne '200'){throw 'Required guard or candidate binding omitted.'}
     throw 'TEST_REACHED_GUARDED_PREFLIGHT'
 }
+$expectedReasons=@{
+    'target-optout'='Approved .NET promotion baseline/runtime required.'
+    'wrapper-optout'='Approved .NET promotion baseline/runtime required.'
+    'target-sdk'='Approved .NET promotion baseline/runtime required.'
+    'target-python'='Approved .NET promotion baseline/runtime required.'
+    'target-channel'='Main promotion requires target and wrapper dual-channel capability.'
+    'wrapper-channel'='Main rollout requires the deployed dual-channel configuration.'
+    'wrong-channel'='Canonical CI channel policy rejected the context.'
+    'fixture-mismatch'='Wrapper candidate contract differs from approved fixture.'
+    'source-redirect'='Unapproved contract source/endpoint redirect.'
+    'mutable-source'='A full lowercase source SHA is required.'
+    'merge-redirect'='Unapproved contract source/endpoint redirect.'
+    'contract-mutation'='Wrapper contract changed between approved source and actual merge.'
+    'blob-mutation'='Wrapper contract blob integrity mismatch.'
+    'path-redirect'='Invalid immutable wrapper contract response.'
+    'missing-multi'='Candidate promotion requires complete sixteen-case single and multidevice contracts.'
+    'duplicate-cases'='Candidate promotion requires complete sixteen-case single and multidevice contracts.'
+    'target-mutation'='Source checkout must be clean before staging the disposable harness.'
+    'unapproved-merge'='Synthetic merged wrapper authentication rejection.'
+}
 $count=0
 try {
     foreach($entrypoint in @('Prepare','Publish')) {
@@ -102,6 +122,7 @@ try {
                 } catch {$reason=$_.Exception.Message}
                 $valid=$case -in @('valid-dev','valid-main')
                 if(!$reason -or (($reason -ceq 'TEST_REACHED_GUARDED_PREFLIGHT') -ne $valid)){throw "$entrypoint/$role/$case unexpected outcome: $reason"}
+                if(!$valid -and !$reason.Contains($expectedReasons[$case])){throw "$entrypoint/$role/$case rejected for the wrong reason: $reason"}
                 $count++
             }
         }
