@@ -16,7 +16,7 @@ if ($target.StartsWith($wrapper+[IO.Path]::DirectorySeparatorChar,[StringCompari
 }
 $fixturePath=Join-Path $CSharpIntegrationRoot 'tests/Wss.CSharpImplementation.Tests/StimulationControllerConformanceTests.cs'
 $fixtureHash=(Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($fixtureHash -cne '1cdfb9448a1776011eadc9aef8356362216032013a4f268f50242746c50a0b44') { throw 'Canonical fixture digest changed.' }
+if ($fixtureHash -cne '14313786be4d5c6daea28e40d2f48567cbc1356feb0f0309e0a212339137923b') { throw 'Canonical fixture digest changed.' }
 $canonical=[IO.File]::ReadAllText($fixturePath)
 $factory='(?s)private static StimulationController CreateController\(string fixtureDirectory\) =>\s*new\(new StimulationOptions\s*\{\s*ConfigPath = fixtureDirectory,\s*Transport = StimulationTransportKind.Conformance,\s*MaxSetupTries = 1,\s*TickIntervalMs = 1\s*\}\);'
 if ([regex]::Matches($canonical,$factory).Count -ne 1) { throw 'Canonical controller factory changed.' }
@@ -24,7 +24,7 @@ if ([regex]::Matches($canonical,$factory).Count -ne 1) { throw 'Canonical contro
 # expected value, assertion, grouped failure reporting or evaluator is replaced.
 $adapted="using StimulationController = DotNetConformanceAdapter;`n"+[regex]::Replace($canonical,$factory,'private static StimulationController CreateController(string fixtureDirectory) => new(fixtureDirectory);')
 $assertions=@([regex]::Matches($canonical,'Assert\.That\(.*?;','Singleline').Value)
-if ($assertions.Count -ne 18 -or ($assertions -join "`n") -cne (@([regex]::Matches($adapted,'Assert\.That\(.*?;','Singleline').Value) -join "`n")) { throw 'Canonical assertion expressions changed.' }
+if ($assertions.Count -ne 20 -or ($assertions -join "`n") -cne (@([regex]::Matches($adapted,'Assert\.That\(.*?;','Singleline').Value) -join "`n")) { throw 'Canonical assertion expressions changed.' }
 New-Item -ItemType Directory -Path $target | Out-Null
 $sources=@((Join-Path $PSScriptRoot 'PythonConformanceAdapter.cs'))
 foreach ($source in $sources) { Copy-Item -LiteralPath $source -Destination $target }
@@ -56,5 +56,5 @@ $project=@'
 $constant=if ($Role -ceq 'cli') { 'CLI_CONFORMANCE' } else { 'WRAPPER_CONFORMANCE' }
 [IO.File]::WriteAllText((Join-Path $target 'Wss.DotNet.Conformance.Tests.csproj'),$project.Replace('ROLE_CONSTANT',$constant).Replace('PYTHON_RUNTIME_ASSEMBLY',[Security.SecurityElement]::Escape($PythonRuntimeAssembly)))
 @{sdk=@{version='9.0.316';rollForward='disable'}} | ConvertTo-Json | Set-Content (Join-Path $target 'global.json')
-@{schema='wss-dotnet-inputs/v1';role=$Role;canonical_fixture_sha256=$fixtureHash;assertion_expressions=18;execution='Python via pythonnet; not Python';files=@($sources | ForEach-Object { @{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()} })} | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $target 'conformance-inputs.json')
+@{schema='wss-dotnet-inputs/v1';role=$Role;canonical_fixture_sha256=$fixtureHash;assertion_expressions=20;execution='Python via pythonnet; not Python';files=@($sources | ForEach-Object { @{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()} })} | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $target 'conformance-inputs.json')
 Write-Output "Prepared $Role .NET host from shared production source at $target"
