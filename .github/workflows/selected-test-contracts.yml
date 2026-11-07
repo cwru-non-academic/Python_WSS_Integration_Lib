@@ -27,3 +27,6 @@ jobs:
           ./.github/scripts/tests/Test-PythonTestSource.ps1
           ./.github/scripts/tests/Test-PythonHiddenSource.ps1
           ./.github/scripts/tests/Test-PythonSelectedContext.ps1
+      - name: Reject actual child mutations of parent authority and baseline
+        shell: pwsh
+        run: ./.github/scripts/tests/Test-SelectedParentSnapshot.ps1
