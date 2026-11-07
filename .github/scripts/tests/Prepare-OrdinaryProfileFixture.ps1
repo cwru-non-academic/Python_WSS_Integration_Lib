@@ -1,7 +1,7 @@
 # Local/hosted regression fixture only. Never publish this synthetic product commit.
 param([Parameter(Mandatory)][string]$ToolsRoot,[Parameter(Mandatory)][string]$ProductRoot,[Parameter(Mandatory)][string]$ProductSha)
 $ErrorActionPreference='Stop'
-function Git([string]$Root,[string[]]$Arguments){$result=& git -C $Root @Arguments;if($LASTEXITCODE -ne 0){throw 'Proof fixture Invoke-ProfileFixtureGit operation failed.'};$result}
+function Invoke-ProfileFixtureGit([string]$Root,[string[]]$Arguments){$result=& git -C $Root @Arguments;if($LASTEXITCODE -ne 0){throw 'Proof fixture Invoke-ProfileFixtureGit operation failed.'};$result}
 $ToolsRoot=[IO.Path]::GetFullPath($ToolsRoot);$ProductRoot=[IO.Path]::GetFullPath($ProductRoot)
 if((Invoke-ProfileFixtureGit $ProductRoot @('rev-parse','HEAD')).Trim() -cne $ProductSha){throw 'Wrong original product source.'}
 if(@(Invoke-ProfileFixtureGit $ProductRoot @('status','--porcelain','--untracked-files=all')).Count){throw 'Original product must be clean.'}
