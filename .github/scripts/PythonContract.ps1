@@ -93,6 +93,9 @@ function New-PythonProjection([string]$ArtifactRoot, [string]$WrapperRoot, [stri
 }
 function Read-PythonConfig([string]$Path,[string]$Channel='') {
     $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    Assert-PythonConfig $config $Channel
+}
+function Assert-PythonConfig($config,[string]$Channel='') {
     if ($config.schema -cne 'wss-python-ci/v1' -or $config.branch -cne 'dev' -or $config.automated_execution -cne 'pythonnet' -or
         $config.python_version -cne '3.12' -or $config.pythonnet_version -cne '3.0.5' -or
         $config.fixture_repository -cne 'cwru-non-academic/CSharp_WSS_Integration_Lib' -or $config.dotnet_expected_cases.Count -ne 16) { throw 'Unexpected Python CI contract.' }

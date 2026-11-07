@@ -13,8 +13,7 @@ Assert-WssCiTargetRef
 if($env:GITHUB_EVENT_NAME -cne 'workflow_dispatch'){throw 'Promotion preparation requires an actual target workflow dispatch.'}
 if (Test-Path -LiteralPath $WorkRoot) { throw 'WorkRoot must be new.' }
 New-Item -ItemType Directory -Path $WorkRoot | Out-Null
-$config=Read-PythonConfig (Join-Path $RepositoryRoot '.github/python-ci.json') -Channel (Get-WssCiChannel)
-if (!$config.baseline_ready -or $config.automated_execution -cne 'pythonnet') { throw 'Approved .NET promotion baseline required.' }
+Assert-PythonPromotionTarget (Get-PythonPromotionTargetConfig $RepositoryRoot) (Get-WssCiChannel)
 $source=(Invoke-PythonGit $RepositoryRoot @('rev-parse','HEAD')).Trim()
 Assert-PythonSource $RepositoryRoot $source -IgnoreSubmodule
 if ($source -cne $env:GITHUB_SHA) { throw 'Promotion checkout differs from trusted workflow source.' }
@@ -24,6 +23,7 @@ if((Get-WssCiChannel) -ceq 'main'){
 }
 if ($Role -ceq 'wrapper') {
     if ($env:GITHUB_REPOSITORY -cne $PythonWrapperRepository -or !$CandidateJson -or $ApprovalJson) { throw 'Invalid wrapper promotion inputs/repository.' }
+    $config=Resolve-PythonPromotionConfig $RepositoryRoot $Role
     $candidate=$CandidateJson | ConvertFrom-Json
     Assert-PythonProducer $candidate
     & "$PSScriptRoot/Resolve-WssRelease.ps1" -RunId $candidate.run_id -ExpectedArtifactId $candidate.artifact_id -ExpectedCommit $candidate.commit -ArchiveName $candidate.archive -ExpectedSha256 $candidate.sha256 -OutputRoot (Join-Path $WorkRoot 'resolved')
@@ -59,6 +59,7 @@ if ($Role -ceq 'wrapper') {
     [IO.File]::WriteAllText((Join-Path $WorkRoot 'approval.json'),$ApprovalJson)
     $approval=Read-PythonApproval (Join-Path $WorkRoot 'approval.json')
     if ($Role -ceq 'ros') { Assert-PythonFanoutApproval $approval }
+    $config=Resolve-PythonPromotionConfig $RepositoryRoot $Role $approval $WrapperMergeSha
     $candidate=$approval.candidate
     Assert-PythonApproval $approval (Join-Path $WorkRoot 'evidence') $config
     Assert-PythonMergedWrapper $WrapperMergeSha $WrapperPr $approval
