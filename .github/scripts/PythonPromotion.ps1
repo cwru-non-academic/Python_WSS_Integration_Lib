@@ -346,3 +346,75 @@ function Assert-PythonMergedWrapper([string]$Sha,[string]$PrNumber,$Approval) {
     $marker=Get-PythonApprovalMarker $Approval
     if (!(($pr.body -split "`r?`n") -ccontains $marker)) { throw 'Merged PR does not carry the exact approval.' }
 }
+
+function Get-PythonPromotionTargetConfig([string]$RepositoryRoot) {
+    $path='.github/python-ci.json'
+    $tree=@(Invoke-PythonGit $RepositoryRoot @('ls-tree','HEAD','--',$path))
+    if ($tree.Count -ne 1 -or $tree[0] -cnotmatch '^100644 blob ([0-9a-f]{40})\t\.github/python-ci\.json$') {
+        throw 'Target promotion policy must be one tracked regular-file blob.'
+    }
+    $blob=$Matches[1]
+    $index=@(Invoke-PythonGit $RepositoryRoot @('ls-files','--stage','--',$path))
+    if ($index.Count -ne 1 -or $index[0] -cne "100644 $blob 0`t$path") { throw 'Target promotion policy index differs from committed policy.' }
+    foreach ($component in @('.github',$path)) {
+        $item=Get-Item -LiteralPath (Join-Path $RepositoryRoot $component) -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Target promotion policy cannot use redirected filesystem components.' }
+    }
+    $sha=(Invoke-PythonGit $RepositoryRoot @('rev-parse','HEAD')).Trim()
+    Assert-PythonSource $RepositoryRoot $sha -IgnoreSubmodule
+    # Parse the fixed tracked Git blob, never a caller-nominated or ignored file.
+    ((Invoke-PythonGit $RepositoryRoot @('cat-file','blob',$blob)) -join "`n") | ConvertFrom-Json
+}
+# Target capability is distinct from the candidate's canonical fixture inventory.
+# Never replace a legacy application's ordinary profile with the candidate profile.
+function Assert-PythonPromotionTarget($Config,[string]$Channel) {
+    if ($Config.schema -cne 'wss-python-ci/v1' -or $Config.branch -cne 'dev' -or
+        $Config.baseline_ready -cne $true -or $Config.automated_execution -cne 'pythonnet' -or
+        $Config.python_version -cne '3.12' -or $Config.pythonnet_version -cne '3.0.5' -or
+        $Config.dotnet_sdk -cne '9.0.316') { throw 'Approved .NET promotion baseline/runtime required.' }
+    $context=Get-WssCiChannelContext $Channel
+    if ($context.channel -ceq 'main' -and (!$Config.PSObject.Properties['channels'] -or
+        $Config.channels.Count -ne 2 -or @(Compare-Object @('dev','main') @($Config.channels) -CaseSensitive).Count)) {
+        throw 'Main promotion requires target and wrapper dual-channel capability.'
+    }
+}
+function Get-PythonPromotionContractData([string]$SourceSha) {
+    Assert-PythonSha $SourceSha
+    # Repository/path and immutable ref are fixed here. Returned URLs and executable
+    # files are never followed; only JSON data is decoded from this response.
+    $path='.github/python-ci.json'
+    $entry=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/contents/${path}?ref=$SourceSha") | ConvertFrom-Json
+    if ($entry.type -cne 'file' -or $entry.path -cne $path -or $entry.encoding -cne 'base64' -or
+        $entry.sha -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid immutable wrapper contract response.' }
+    $bytes=[Convert]::FromBase64String($entry.content)
+    $prefix=[Text.Encoding]::UTF8.GetBytes("blob $($bytes.Length)`0")
+    $gitHash=[Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([byte[]]($prefix+$bytes))).ToLowerInvariant()
+    if ($gitHash -cne $entry.sha) { throw 'Wrapper contract blob integrity mismatch.' }
+    $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
+    [pscustomobject]@{blob=$gitHash; config=($text | ConvertFrom-Json)}
+}
+function Resolve-PythonPromotionConfig([string]$RepositoryRoot,[ValidateSet('wrapper','cli','ros')][string]$Role,$Approval,[string]$WrapperMergeSha='') {
+    $channel=Get-WssCiChannel
+    $own=Get-PythonPromotionTargetConfig $RepositoryRoot
+    Assert-PythonPromotionTarget $own $channel
+    if ($Role -ceq 'wrapper') { $config=Assert-PythonConfig $own $channel }
+    else {
+        # The same approved source and actual merge must contain byte-identical
+        # contracts. Assert-PythonMergedWrapper separately authenticates that merge,
+        # bot PR approval, exact projection, ancestry and successful final-head CI.
+        $approved=Get-PythonPromotionContractData $Approval.wrapper.source_sha
+        $merged=Get-PythonPromotionContractData $WrapperMergeSha
+        if ($approved.blob -cne $merged.blob) { throw 'Wrapper contract changed between approved source and actual merge.' }
+        $config=Assert-PythonConfig $approved.config $channel
+        if ($config.fixture_commit -cne $Approval.fixture.commit -or $config.fixture_sha256 -cne $Approval.fixture.sha256) {
+            throw 'Wrapper candidate contract differs from approved fixture.'
+        }
+    }
+    Assert-PythonPromotionTarget $config $channel
+    if (!$config.PSObject.Properties['multidevice_expected_cases'] -or $config.multidevice_expected_cases.Count -ne 6 -or
+        @($config.dotnet_expected_cases | Select-Object -Unique).Count -ne 16 -or
+        @(@($config.dotnet_expected_cases | Select-Object -First 10)+@($config.multidevice_expected_cases) | Select-Object -Unique).Count -ne 16) {
+        throw 'Candidate promotion requires complete sixteen-case single and multidevice contracts.'
+    }
+    $config
+}
