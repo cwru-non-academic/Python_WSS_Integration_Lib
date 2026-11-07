@@ -54,7 +54,7 @@ function Assert-PythonProfileResults([string]$Path,$Contract,[string]$Stage) {
     foreach($name in @('failed','skipped','inconclusive')){if($run.GetAttribute($name) -cne '0'){throw 'Legacy test failure/skip is forbidden.'}}
     if(@(Compare-Object @($Contract.single_cases) @($cases | ForEach-Object {$_.GetAttribute('name')}) -CaseSensitive).Count -or @($cases | Where-Object {$_.GetAttribute('result') -cne 'Passed'}).Count){throw 'Legacy case identity/result differs from trusted bootstrap inventory.'}
 }
-function Assert-PythonProfileEvidence([string]$Root,$Profile,$Projection) {
+function Assert-PythonProfileEvidence([string]$Root,$Profile,$Projection,$Tooling=$null) {
     $contract=Get-PythonProfileContract $Profile.profile
     $stages=if($Profile.profile -ceq 'layered-v1'){@('single','multi')}else{@('single')}
     if($Profile.profile -ceq 'legacy-v1' -and (Test-Path (Join-Path $Root 'multi/evidence.json'))){throw 'Legacy proof cannot claim an invented multi stage.'}
@@ -65,6 +65,7 @@ function Assert-PythonProfileEvidence([string]$Root,$Profile,$Projection) {
         $count=if($stage -ceq 'single'){$contract.single_cases.Count}else{$contract.multi_cases.Count}
         if($e.schema -cne 'wss-python-profile-evidence/v1' -or $e.profile -cne $Profile.profile -or $e.producer_commit -cne $Profile.producer.commit -or $e.core_dll_sha256 -cne $Profile.core_dll_sha256 -or $e.fixture_sha256 -cne $contract.fixture_sha256 -or $e.fixture_sha -cne $contract.fixture_commit -or $e.stage -cne $stage -or $e.discovered -ne $count -or $e.executed -ne $count -or $e.passed -ne $count -or $e.failed -ne 0 -or $e.skipped -ne 0 -or $e.assertion_expressions -ne $contract.assertion_expressions -or $e.projection_sha256 -cne $Projection.projection_sha256){throw 'Profile proof identity, coverage, fixture or payload mismatch.'}
         Assert-PythonSameCandidate $e.candidate $Profile.producer
+        if($Tooling){foreach($field in @('tooling_root','tooling_sha','tooling_config_sha256')){if(!$e.PSObject.Properties[$field] -or $e.$field -cne $Tooling.$field){throw 'Ordinary evidence tooling/config binding differs.'}}}
         Assert-PythonTestEvidencePair $e $e
         foreach($pair in @(@('results.xml','results_sha256'),@('dotnet.log','log_sha256'))){if((Get-FileHash (Join-Path $directory $pair[0])).Hash.ToLowerInvariant() -cne $e.($pair[1])){throw 'Profile evidence content hash mismatch.'}}
         Assert-PythonProfileResults (Join-Path $directory 'results.xml') $contract $stage

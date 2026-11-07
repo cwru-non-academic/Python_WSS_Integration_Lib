@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$WrapperSha,
     [Parameter(Mandatory)][string]$ConfigPath,
     [Parameter(Mandatory)][string]$OutputRoot,
+    [string]$ToolsRoot='', [string]$ToolsSha='',
     [string]$TestRoot='', [string]$TestSha='', [string]$TestRepository='', [string]$TestSelectionId='',
     [string]$CliRoot='', [string]$CliSha='',
     [ValidateSet('committed','candidate')][string]$Mode='committed',
@@ -15,8 +16,16 @@ param(
 )
 . "$PSScriptRoot/PythonContract.ps1"
 . "$PSScriptRoot/PythonProfiles/Contract.ps1"
-if([IO.Path]::GetFullPath($ConfigPath) -cne [IO.Path]::GetFullPath((Join-Path $WrapperRoot '.github/python-ci.json'))){throw 'Runtime config must come from actual wrapper product.'}
-$config=Read-PythonProfileProductConfig $ConfigPath
+$toolBinding=$null
+if($ToolsRoot -or $ToolsSha) {
+    if($Mode -cne 'committed'){throw 'Explicit tooling binding currently supports ordinary committed validation only.'}
+    . "$PSScriptRoot/PythonProfiles/Tooling.ps1"
+    $toolBinding=Resolve-PythonOrdinaryTooling -ToolsRoot $ToolsRoot -ToolsSha $ToolsSha -ConfigPath $ConfigPath -WrapperRoot $WrapperRoot -WrapperSha $WrapperSha
+    $config=$toolBinding.config
+} else {
+    if([IO.Path]::GetFullPath($ConfigPath) -cne [IO.Path]::GetFullPath((Join-Path $WrapperRoot '.github/python-ci.json'))){throw 'Runtime config must come from actual wrapper product.'}
+    $config=Read-PythonProfileProductConfig $ConfigPath
+}
 Assert-PythonSource $WrapperRoot $WrapperSha
 if($Role -ceq 'cli' -or $Mode -ceq 'candidate'){
     if(!$CliRoot -or !$CliSha){throw 'CLI/candidate validation requires exact paired CLI source.'}
@@ -25,7 +34,7 @@ if($Role -ceq 'cli' -or $Mode -ceq 'candidate'){
 if(($Mode -ceq 'candidate' -or $TestRoot -or $TestSha -or $TestRepository -or $TestSelectionId) -and $config.baseline_ready -cne $true){throw 'Product baseline readiness cannot be overridden by test selection.'}
 if(Test-Path -LiteralPath $OutputRoot){throw 'OutputRoot must be new.'}
 $rootOutput=[IO.Path]::GetFullPath($OutputRoot)
-foreach($source in @($WrapperRoot,$CliRoot,$TestRoot) | Where-Object {$_}){
+foreach($source in @($WrapperRoot,$CliRoot,$TestRoot,$ToolsRoot) | Where-Object {$_}){
     $path=[IO.Path]::GetFullPath($source)
     if($rootOutput -eq $path -or $rootOutput.StartsWith($path+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Output must remain outside immutable source checkouts.'}
 }
@@ -108,6 +117,11 @@ $evidence=[ordered]@{
     results_sha256=(Get-FileHash -LiteralPath $xmlPath).Hash.ToLowerInvariant()
     log_sha256=(Get-FileHash -LiteralPath $logPath).Hash.ToLowerInvariant()
 }
+if($toolBinding){
+    $evidence.tooling_root=$toolBinding.tooling_root
+    $evidence.tooling_sha=$toolBinding.tooling_sha
+    $evidence.tooling_config_sha256=$toolBinding.tooling_config_sha256
+}
 $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'evidence.json')
 $projection | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputRoot 'projection.json')
 
@@ -119,7 +133,8 @@ if($profile.profile -ceq 'layered-v1' -and @($stages).Count -eq 2){
     $multi=Get-Content (Join-Path $rootOutput 'multi/evidence.json') -Raw | ConvertFrom-Json
     foreach($field in @('profile','producer_commit','core_dll_sha256')){if($single.$field -cne $multi.$field){throw 'Profile identity differs between mandatory stages.'}}
 }
-if(@($stages).Count -eq 2 -or $profile.profile -ceq 'legacy-v1'){Assert-PythonProfileEvidence $rootOutput $profile $projection}
+if(@($stages).Count -eq 2 -or $profile.profile -ceq 'legacy-v1'){Assert-PythonProfileEvidence $rootOutput $profile $projection $toolBinding}
+if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
 $recheck=Resolve-WssReviewedProfile $projectionRoot $candidate -SelectionEnabledCampaign:$SelectionEnabledCampaign
 if($recheck.profile -cne $profile.profile -or $recheck.core_dll_sha256 -cne $profile.core_dll_sha256){throw 'Verified product capability changed during execution.'}
 } finally {$env:WSS_CONFORMANCE_STAGE=$previousStage}

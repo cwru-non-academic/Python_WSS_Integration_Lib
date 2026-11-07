@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$WrapperSha,
     [Parameter(Mandatory)][string]$ConfigPath,
     [Parameter(Mandatory)][string]$OutputRoot,
+    [string]$ToolsRoot='', [string]$ToolsSha='',
     [string]$TestRoot='',
     [string]$TestSha='',
     [string]$TestRepository='',
@@ -29,6 +30,11 @@ if($Mode -ceq 'committed') {
     Assert-PythonProjection $ordinaryPayload $ordinaryProjection
     $ordinaryProfile=Resolve-WssReviewedProfile $ordinaryPayload $ordinaryProjection.candidate
     $ordinaryContract=Get-PythonProfileContract $ordinaryProfile.profile
+    if($ToolsRoot -or $ToolsSha){
+        . "$PSScriptRoot/PythonProfiles/Tooling.ps1"
+        $binding=Resolve-PythonOrdinaryTooling -ToolsRoot $ToolsRoot -ToolsSha $ToolsSha -ConfigPath $ConfigPath -WrapperRoot $WrapperRoot -WrapperSha $WrapperSha
+        if($binding.profile.profile -cne $ordinaryProfile.profile){throw 'Tool/product profile mismatch.'}
+    }
     Assert-PythonSource $FixtureRoot $ordinaryContract.fixture_commit
     $ordinary=@{}
     foreach($key in $PSBoundParameters.Keys){if($key -cne 'FixtureRoot'){$ordinary[$key]=$PSBoundParameters[$key]}}
@@ -36,6 +42,7 @@ if($Mode -ceq 'committed') {
     if(!$?){throw 'Ordinary capability-profile validation failed.'}
     return
 }
+if($ToolsRoot -or $ToolsSha){throw 'Candidate validation does not accept ordinary tooling overrides.'}
 $previousStage = $env:WSS_CONFORMANCE_STAGE
 try {
 # Ordinary and candidate callers must execute both isolated stages by default.
