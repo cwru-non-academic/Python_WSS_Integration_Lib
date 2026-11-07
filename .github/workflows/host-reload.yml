@@ -1,4 +1,4 @@
-name: Host reload regression
+name: Host capability regressions
 on:
   pull_request:
     paths: ['src/**', 'tests/**', 'Cs_Libraries/**', '.github/workflows/host-reload.yml']
@@ -14,6 +14,7 @@ jobs:
     env:
       PYTHONNET_RUNTIME: coreclr
       PYTHONPATH: src
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,5 +25,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Bind regression coverage to authenticated installed capabilities
+        shell: pwsh
+        run: |
+          . ./.github/scripts/PythonContract.ps1
+          . ./.github/scripts/PythonProfiles/Contract.ps1
+          $record=Get-Content .github/python-candidate.json -Raw | ConvertFrom-Json
+          Assert-PythonProjection "$env:GITHUB_WORKSPACE/Cs_Libraries" $record
+          $profile=Resolve-WssReviewedProfile "$env:GITHUB_WORKSPACE/Cs_Libraries" $record.candidate
+          if($profile.profile -ceq 'layered-v1' -and !(Test-Path -LiteralPath tests/test_configuration_reload.py -PathType Leaf)){throw 'Modern host must retain its complete configuration-reload regression suite.'}
+          Write-Output "Running every existing host regression for authenticated $($profile.profile)."
       - run: python -m pip install -e .
-      - run: python -m unittest discover -s tests -v
+      - run: python -B -m unittest discover -s tests -v
