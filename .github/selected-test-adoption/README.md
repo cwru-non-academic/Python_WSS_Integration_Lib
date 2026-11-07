@@ -2,10 +2,18 @@
 
 Nothing in this directory is an active GitHub Actions workflow. No lock, literal
 workflow pin, live policy, product configuration, gitlink, or payload was changed.
-The current checked-in d965 Core lock deliberately refuses the new bridge until
-reviewed immutable Core tooling and coordinated consumer pins are deployed.
+Activation requires reviewed current-contract Core tooling, matching immutable
+consumer pins, bootstrap trust and isolated hosted executor integration.
+Shared source adoption alone does not complete selected execution.
 
-## Reviewed execution boundary
+## Legacy online bridge behavior
+
+The online inspect/evidence and WithContext behavior below remains supported for
+API compatibility. The adjacent fragment is a legacy integration recipe, not a
+deployable offline job graph. Readiness checks alone do not make it deployable:
+activation requires a separately reviewed current-contract flow with trusted
+authentication and a separate credential-free hosted executor receiving no
+source/plan, App or publishing credentials, including read tokens.
 
 `Invoke-SelectedPythonTestsWithContext.ps1` accepts CoreRoot, ContextPath,
 RootsPath, WorkRoot, Mode, optional authenticated ArtifactRoot/CandidatePath,
@@ -16,7 +24,9 @@ comes only from authenticated inspection. Both executions use identical original
 product roots, runtime config, bootstrap-owned canonical fixture and candidate projection inputs.
 Each suite executes in an isolated child process with credential variables, SSH
 authentication handles and GitHub command-file handles removed. Parent credentials
-and environment are never mutated; selected code cannot read saved parent scope. A failed inspect or suite cannot emit evidence.
+and environment are never mutated. Child environment filtering is a local
+orchestration control, not a substitute for the separate credential-free hosted
+executor required before activation. A failed inspect or suite cannot emit evidence.
 
 The generic evidence is the sole `evidence.json` in
 `wss-selected-tests-python-wrapper-a<attempt>`. Rich baseline and selected runtime
@@ -39,10 +49,14 @@ must never publish if any required existing gate failed or did not run.
 
 The selection prerequisite checks out the full immutable Core tree, verifies its
 checked-in source lock, and passes actual runner identity and explicit channel.
-It obtains repository-only variable data through WSS_TEST_VARIABLE_READ_TOKEN;
-no inherited organization/environment `vars` context selects tests. Check the
-App's existing Variables-read grant before activation. Requesting the scoped
-short-lived token is not permission to expand its installation grants.
+The reviewed resolver job declares no environment and maps the fixed
+WSS_LOCAL_TEST_VARIABLES_SCHEMA=wss-effective-test-variables/v1 contract plus
+WSS_USE_PIN_TESTS, WSS_PIN_TEST_REPOSITORY and WSS_PIN_TEST_COMMIT from effective
+org/repository vars through env. These three settings are user-configurable;
+repository values override organization values. No Variables-read token or new
+App grant is required. Follow the reviewed Core
+tools/ci/LOCAL_TEST_VARIABLE_SNAPSHOTS.md; source/plan access retains scoped read
+authority, and campaign snapshot dispatch uses existing Actions/Contents capabilities.
 
 The prerequisite calls `select` once to prepare a durable envelope. It uploads
 only when created=true, using the helper's immutable artifact_name, then calls
@@ -81,7 +95,7 @@ evidence ordering, failure suppression, unchanged product/candidate inputs,
 source-output isolation, and a real token-free child process. These mocks are
 orchestration unit tests, not authenticated campaign acceptance evidence.
 
-Real execution with the current unchanged tooling lock is intentionally blocked.
+Selected execution remains inactive pending the reviewed caller and trust integration.
 Before activation: review dual-profile legacy/layered product reconciliation,
 land reviewed shared tooling and refreshed literal pins on both required branches,
 validate hosted durable recovery, credentials/permissions and
