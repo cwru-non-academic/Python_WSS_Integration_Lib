@@ -126,6 +126,18 @@ function Assert-PythonResults([string]$Path, $Config, [switch]$DotNet, [Validate
 function Assert-PythonSource([string]$Root,[string]$Sha,[switch]$IgnoreSubmodule) {
     Assert-PythonSha $Sha
     if ((Invoke-PythonGit $Root @('rev-parse','HEAD')).Trim() -cne $Sha) { throw 'Checked-out source differs from the pinned SHA.' }
+    # Git status is insufficient when assume-unchanged or skip-worktree hides edits.
+    if (@(Invoke-PythonGit $Root @('ls-files','-v') | Where-Object { $_ -cnotmatch '^H ' }).Count) {
+        throw 'Immutable source cannot have hidden index flags (assume-unchanged or skip-worktree).'
+    }
+    # PYTHONDONTWRITEBYTECODE prevents writes, not reads: unchecked-hash bytecode
+    # can execute in place of the pinned .py file. Reject ignored executable inputs
+    # before and after runtime execution instead of trusting normal Git status.
+    $ignoredText=(Invoke-PythonGit $Root @('ls-files','--others','--ignored','--exclude-standard','-z')) -join "`n"
+    $ignored=@($ignoredText -split "`0" | Where-Object { $_ })
+    if (@($ignored | Where-Object { $_ -match '^src/' -or $_ -match '\.py[co]$' }).Count) {
+        throw 'Immutable source cannot contain ignored Python bytecode or ignored src inputs.'
+    }
     $statusArguments=@('status','--porcelain','--untracked-files=normal')
     if ($IgnoreSubmodule) { $statusArguments+='--ignore-submodules=all' }
     if (@(Invoke-PythonGit $Root $statusArguments).Count -ne 0) { throw 'Source checkout must be clean before staging the disposable harness.' }
@@ -150,6 +162,7 @@ function Assert-PythonMultiStageEvidence([string]$Root,$Single,$Config) {
     foreach ($field in @('schema','execution','role','mode','wrapper_sha','fixture_sha','fixture_sha256','sdk','target_framework','test_framework','run_repository','run_id','run_sha','projection_sha256','python','pythonnet','python_executed')) {
         if ($multi.$field -cne $Single.$field) { throw "Multi-stage evidence differs: $field" }
     }
+    Assert-PythonTestEvidencePair $Single $multi
     $singleCli=$Single.PSObject.Properties['cli_sha']
     $multiCli=$multi.PSObject.Properties['cli_sha']
     if ([bool]$singleCli -ne [bool]$multiCli -or ($singleCli -and $singleCli.Value -cne $multiCli.Value)) { throw 'Multi-stage paired CLI source differs.' }
@@ -163,3 +176,5 @@ function Assert-PythonMultiStageEvidence([string]$Root,$Single,$Config) {
     if ((Get-FileHash -LiteralPath (Join-Path $multiRoot 'projection.json')).Hash -cne (Get-FileHash -LiteralPath (Join-Path $Root 'projection.json')).Hash) { throw 'Multi-stage package projection differs.' }
     Assert-PythonResults (Join-Path $multiRoot 'results.xml') $Config -DotNet -Stage multi
 }
+
+. "$PSScriptRoot/PythonTestSource.ps1"

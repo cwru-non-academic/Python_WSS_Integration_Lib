@@ -4,6 +4,10 @@ param(
     [Parameter(Mandatory)][string]$WrapperSha,
     [Parameter(Mandatory)][string]$ConfigPath,
     [Parameter(Mandatory)][string]$OutputRoot,
+    [string]$TestRoot='',
+    [string]$TestSha='',
+    [string]$TestRepository='',
+    [string]$TestSelectionId='',
     [string]$CliRoot='',
     [string]$CliSha='',
     [ValidateSet('committed','candidate')][string]$Mode='committed',
@@ -28,12 +32,16 @@ if ($Stage -ceq 'all') {
     $options.OutputRoot = Join-Path $OutputRoot 'multi'
     & $PSCommandPath @options
     $single = Get-Content (Join-Path $OutputRoot 'evidence.json') -Raw | ConvertFrom-Json
-    Assert-PythonMultiStageEvidence $OutputRoot $single (Read-PythonConfig $ConfigPath)
+    Assert-PythonMultiStageEvidence $OutputRoot $single (Resolve-PythonTestSource $WrapperRoot $WrapperSha $ConfigPath $TestRoot $TestSha $TestRepository $TestSelectionId).contract
     return
 }
 
 $env:WSS_CONFORMANCE_STAGE=$Stage
-$config=Read-PythonConfig $ConfigPath
+$productConfig=Read-PythonConfig $ConfigPath
+$tests=Resolve-PythonTestSource $WrapperRoot $WrapperSha $ConfigPath $TestRoot $TestSha $TestRepository $TestSelectionId
+$config=$tests.contract
+# Runtime and release authority always come from the product, never selected tests.
+foreach ($field in @('automated_execution','dotnet_sdk','python_version','pythonnet_version')) { $config | Add-Member -NotePropertyName $field -NotePropertyValue $productConfig.$field -Force }
 if ($config.automated_execution -cne 'pythonnet' -or $config.dotnet_sdk -cne '9.0.316') { throw 'Unexpected automated execution contract.' }
 if (Test-Path -LiteralPath $OutputRoot) { throw 'OutputRoot must be new.' }
 Assert-PythonSource $WrapperRoot $WrapperSha
@@ -70,7 +78,7 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 $env:WSS_PYTHON_SOURCE=Join-Path $WrapperRoot 'src'
 $env:WSS_CLI_SOURCE=if ($CliRoot) { Join-Path $CliRoot 'src' } else { '' }
 $env:WSS_PYTHON_PAYLOAD=$projectionRoot
-& (Join-Path $WrapperRoot 'conformance/Prepare-Harness.ps1') -CSharpIntegrationRoot $FixtureRoot -Destination $harness -ProjectionRoot $projectionRoot -Role $Role -CliRoot $CliRoot -PythonRuntimeAssembly $pythonInfo.assembly
+& (Join-Path $tests.root 'conformance/Prepare-Harness.ps1') -CSharpIntegrationRoot $FixtureRoot -Destination $harness -ProjectionRoot $projectionRoot -Role $Role -CliRoot $CliRoot -PythonRuntimeAssembly $pythonInfo.assembly
 if (!$?) { throw 'Portable harness preparation failed.' }
 Push-Location $harness
 try { $sdk=(& dotnet --version).Trim(); if ($LASTEXITCODE -ne 0 -or $sdk -cne $config.dotnet_sdk) { throw 'Wrong .NET SDK.' } } finally { Pop-Location }
@@ -95,10 +103,12 @@ foreach ($name in @('WSS_Core_Interface.dll','Newtonsoft.Json.dll','System.Secur
 Assert-PythonProjection $projectionRoot $projection
 Assert-PythonSource $WrapperRoot $WrapperSha
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
+Assert-PythonTestSource $tests
 $inputs=Get-Content -LiteralPath (Join-Path $harness 'conformance-inputs.json') -Raw | ConvertFrom-Json
 if ($inputs.assertion_expressions -ne 20 -or $inputs.canonical_fixture_sha256 -cne $config.fixture_sha256) { throw 'Harness provenance mismatch.' }
 $evidence=[ordered]@{
     schema='wss-python-evidence/v1'; execution='pythonnet'; role=$Role; mode=$Mode; candidate=$candidate
+    test_root=$tests.root; test_sha=$tests.sha; test_repository=$tests.repository; test_selection_id=$tests.selection_id; test_contract_sha256=$tests.contract_sha256
     wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$config.fixture_commit; fixture_sha256=$config.fixture_sha256
     sdk=$sdk; target_framework='net9.0'; test_framework='NUnit 3.14.0'; python_executed=$true
     python=$pythonInfo.version; pythonnet=$netVersion
