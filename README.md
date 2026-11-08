@@ -107,8 +107,8 @@ another platform's backend.
 The platform checks verify installed-wheel loading and actual BLE constructor
 routing. macOS CI additionally checks native exports/ABI and creates/disposes an
 inert native context. They do not scan, connect to a device, or demonstrate
-physical stimulation. The shared ten-case canonical suite uses Core's emulator
-and unchanged validators. Real device, permissions and radio behavior require
+physical stimulation. The shared profile-specific canonical suites use Core's
+emulator and unchanged validators. Real device, permissions and radio behavior require
 separate manual validation on the target OS.
 
 `Config/stimConfig.json` now exposes existing Core receiver settings:
@@ -214,15 +214,21 @@ promotion; it is never relabeled as CLI acceptance. Normal CI also runs the
 
 ### Production path and unchanged cases
 
-The current executable fixture commit and content digest are declared in
-[`.github/python-ci.json`](.github/python-ci.json); CI reads those fields directly.
+Ordinary validation selects fixture identity and case inventories from the
+[profile contract](.github/scripts/PythonProfiles/Contract.ps1) after verifying the
+installed payload profile. Candidate fixture inputs remain declared in
+[`.github/python-ci.json`](.github/python-ci.json).
 The central [verification pin reference](https://github.com/cwru-non-academic/WSS_Documentation/blob/dev/apiDocs/conceptual/verification-pin-reference.md)
 explains fixture and receiver pins as a dated inspection snapshot, rather than a
-list of currently deployed values. The reviewed configuration remains authoritative.
-The canonical fixture is reused directly. Only its controller factory and type alias change. All ten
-canonical cases, shared scenarios/values, finite waits, evaluators, Assert.Multiple
-blocks and eighteen Assert.That expressions remain unchanged. Case names retain
-the canonical CSharp wording so identities can be compared across repositories.
+list of currently deployed values. The reviewed source contracts remain authoritative.
+The canonical fixture is reused directly for the verified payload profile. Only
+its controller factory and type alias change; shared scenarios/values, finite
+waits, evaluators and assertions remain unchanged. The reviewed legacy profile
+retains ten cases and eighteen assertion expressions. The modern layered profile
+requires both sixteen-case single-device and sixteen-case multi-device suites,
+with twenty assertion expressions per stage. See the
+[profile contract](.github/scripts/PythonProfiles/README.md) for fixture identities.
+Case names retain the canonical CSharp wording for cross-repository comparison.
 
 `conformance/PythonConformanceAdapter.cs` embeds CPython 3.12 with pythonnet 3.0.5
 in a disposable .NET 9.0.316 NUnit host. Every tested command enters the actual
@@ -258,14 +264,17 @@ for the CLI gitlink update.
 `Invoke-DotNetConformance.ps1` verifies clean exact source SHAs, the canonical
 fixture hash, the complete original universal inventory and every file hash before
 and after execution. Candidate mode stages a fresh verified payload and never
-falls back to committed DLLs. NUnit XML must contain exactly ten expected cases,
-all executed/passed with zero skips/failures. Evidence records Python execution,
-runtime versions, source SHAs, producer/artifact/archive tuple, payload digest,
-eighteen unchanged assertion expressions and XML/log hashes.
+falls back to committed DLLs. NUnit XML must contain the exact expected cases for
+each required profile stage, all executed/passed with zero skips/failures. Modern
+candidate evidence requires paired single-device and multi-device results.
+Evidence records Python execution, runtime versions, source SHAs,
+producer/artifact/archive tuple, payload digest, profile-specific unchanged
+assertion expressions and XML/log hashes.
 
-Successful committed runs retain `dotnet-conformance-evidence`; candidate runs
-retain `python-preflight-evidence`. The schema is `wss-python-evidence/v1`,
-execution is `pythonnet`, and `python_executed` must be true. The hosted process
+Successful committed runs retain `dotnet-conformance-evidence` with schema
+`wss-python-profile-evidence/v1`; candidate runs retain `python-preflight-evidence`
+with schema `wss-python-evidence/v1`. Both record `execution: pythonnet` and require
+`python_executed: true`. The hosted process
 is .NET embedding Python; this is actual Python execution, not .NET-only evidence.
 Ordinary CI uses public read-only checkouts without App secrets.
 
@@ -326,9 +335,11 @@ GUI behavior, hardware safety, or compatibility across all Python/.NET versions.
 
 ### Separate behavior and platform checks
 
-Ordinary CI runs the unchanged ten-case/eighteen-assertion canonical corpus in
-`Integration behavioral tests` or `CLI general conformance` directly, with no
-aggregate acceptance alias. The embedding host remains Windows CPython 3.12;
+Ordinary CI runs the canonical suites required by the verified installed payload
+profile in `Integration behavioral tests` or `CLI general conformance` directly,
+with no aggregate acceptance alias. Modern products require paired single-device
+and multi-device suites; reviewed legacy products retain their ten-case baseline.
+The embedding host remains Windows CPython 3.12;
 this behavioral result makes no claim about other operating systems.
 
 Independent jobs named `Integration compatibility (Windows)`, `(Ubuntu)`,
@@ -342,9 +353,10 @@ source checkout. These are platform/package checks, not repetitions of the
 emulator scenarios. Python wheels contain source; the verified universal runtime
 payload is staged beside the installed package, matching the documented layout.
 
-macOS uses an x64 runner. The exact legacy payload explicitly reports unsupported
-BLE; a payload declaring the macOS BLE inventory must pass managed activation and
-native ABI checks, and its shared C# BLE test must pass without a skip. See
+macOS requires both native Intel (x86_64) and ARM64 runner evidence. The exact
+legacy payload explicitly reports unsupported BLE; a payload declaring the macOS
+BLE inventory must pass managed activation and native ABI checks, and its shared
+C# BLE test must pass without a skip. See
 [macOS BLE receiver contract](#macos-ble-receiver-contract) for the two exact contracts and
 the canonical producer/receiver preparation boundary.
 No check opens a physical serial port or connects to a BLE device. The existing
@@ -393,7 +405,8 @@ also execute its macOS BLE case successfully; a skipped old fixture fails the ne
 contract. Physical-device support is a separate validation boundary.
 
 Candidate preflights now run actual package/platform checks on Windows, Ubuntu and
-macOS alongside the unchanged ten-case/eighteen-assertion shared Core conformance.
+macOS alongside the required modern single-device and multi-device shared Core
+conformance suites.
 For a new producer, proof requires all three platform jobs and hash/source/run-bound
 native smoke reports. Canonical producer proof additionally requires:
 
@@ -487,8 +500,10 @@ a new wrapper promotion or ROS promotion.
 
 All three candidate acceptance jobs must pass before a new wrapper dependency PR.
 Wrapper/CLI evidence remains `wss-python-evidence/v1`, artifact
-`python-preflight-evidence`, exactly four files: `evidence.json`, `results.xml`,
-`dotnet.log`, `projection.json`. ROS uses that same artifact/envelope, with role
+`python-preflight-evidence`, with the exact inventory declared by
+[`Get-PythonEvidenceFiles`](.github/scripts/PythonPromotion.ps1): `evidence.json`,
+`results.xml`, `dotnet.log` and `projection.json` at the root and again under
+`multi/` for eight canonical files. ROS uses that same artifact/envelope, with role
 `ros`, `wrapper_sha`, `ros_sha`, and its exact own `run_sha`/repository/run ID.
 Wrapper/CLI bind their wrapper/CLI source pair independently; ROS binds its
 wrapper/ROS pair. The v2 approval binds all three sources and the same candidate,
@@ -496,21 +511,23 @@ fixture and payload digest. CLI does not depend on ROS source at runtime.
 
 Evidence must record actual pythonnet execution (`execution: pythonnet`,
 `python_executed: true`), SDK 9.0.316, net9.0, NUnit 3.14.0, Python 3.12,
-pythonnet 3.0.5, ten exact canonical cases discovered/executed/passed, zero
-failures/skips, eighteen unchanged assertion expressions, fixture identity,
-candidate identity, projection digest and XML/log SHA256 values. ROS must generate
-real canonical NUnit results through its production path. No stubbed ROS result,
+pythonnet 3.0.5, the exact sixteen canonical cases discovered/executed/passed in
+each of the single-device and multi-device stages, zero failures/skips, twenty
+unchanged assertion expressions per stage, fixture identity, candidate identity,
+projection digest and XML/log SHA256 values. Both stages must bind the same
+source/candidate identities. ROS must generate real canonical NUnit results
+through its production path. No stubbed ROS result,
 CLI-only proof or generated green summary substitutes for that evidence.
 
-ROS retains its two independently executed suites and adds the unchanged
-canonical corpus to the Windows job. Candidate acceptance requires all three
+ROS retains its two independently executed ROS suites and runs both modern
+canonical stages in the Windows job. Candidate acceptance requires all three
 successful, non-skipped jobs by their exact names:
 
 - `ROS compatibility`
 - `ROS model and contract fixtures (Windows development host)`
 - `ROS colcon and installed DDS fixture (Humble development baseline)`
 
-The ROS artifact has exactly **seven** files: the four canonical files above,
+The ROS artifact has exactly **eleven** files: the eight canonical files above,
 plus `ros-model.json`, `ros-native-symlink.json`, `ros-native-copy.json`. The
 envelope adds `ros_model_sha256`, `ros_native_symlink_sha256`,
 `ros_native_copy_sha256` and `native_ros_distribution: humble`. Its Python/SDK
@@ -524,7 +541,7 @@ pre-existing capacity issue; promotion code does not invent substitute values.
 The two `wss-ros-native/v1` reports must pass with all nine DDS channels in their
 respective copied/symlink installed layouts. These remain clearly distinguished:
 actual Core with ROS doubles versus actual rclpy/DDS with a managed recording
-double. The ten canonical assertions supplement both suites and are not relabeled
+double. The canonical-stage assertions supplement both ROS suites and are not relabeled
 as proof of DDS or StimWithMode coverage. Missing any report/hash/job fails closed.
 
 `projection.json` uses the existing `wss-python-projection/v1` complete universal
@@ -566,7 +583,7 @@ Receipt code, normal CI and scripts must have the frozen Git IDs. A preparation
 merge or no-op cannot become a `merged-pr` acceptance receipt.
 
 The emitter is read-only. It invokes the existing v2 approval, source-scope,
-archive checksum, strict 25/27-file projection, canonical 10-case/18-assertion,
+archive checksum, strict 25/27-file projection, paired modern canonical-stage,
 platform, and ROS native validators. Applications additionally prove their actual
 human-merged parent and fresh merged-wrapper preflight. Every original proof
 source must match its frozen target snapshot. Latest actual-merge push/dispatch
