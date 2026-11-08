@@ -1,0 +1,734 @@
+[
+  {
+    "target": "csharp-wrapper",
+    "channel": "dev",
+    "source_sha": "406f548e067a688dd1dc4dba4423fbea23cd6279",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "csharp-wrapper",
+    "channel": "main",
+    "source_sha": "c18572d47beafcf568c11322562c85fa4845d86d",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "csharp-cli",
+    "channel": "dev",
+    "source_sha": "9bd25be4fe20dc2b58dd7299b6baba1d89898ca0",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "csharp-cli",
+    "channel": "main",
+    "source_sha": "4323b76b4de6ab6a349bd8744558e344ca74dfcf",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "unity-wrapper",
+    "channel": "dev",
+    "source_sha": "f169a921ea4949b8d8c9afbb5e3bc33c49812bf6",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "unity-wrapper",
+    "channel": "main",
+    "source_sha": "88a4069f583d36a357a5a97fb048275b126e8e63",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "unity-gui",
+    "channel": "dev",
+    "source_sha": "203edfa277395f1da01fb20f8d41e481d5dec97e",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "unity-gui",
+    "channel": "main",
+    "source_sha": "590a638da53c2a6e7049010f28b28d5a0550af97",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "python-wrapper",
+    "channel": "dev",
+    "source_sha": "c97dbae08bbd56fd3afca69837d16f4149944cd1",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "python-wrapper",
+    "channel": "main",
+    "source_sha": "ca6defff68eff040a08e75bd90cbcf3b67440d4f",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "python-cli",
+    "channel": "dev",
+    "source_sha": "087b76d8bae37aa547e6588a309440619a86646a",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "python-cli",
+    "channel": "main",
+    "source_sha": "75e9f5dd666077f3859c5b212ee8c683d3fccf4d",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "python-ros",
+    "channel": "dev",
+    "source_sha": "0fe032701464276218ebe28d5d64f1f875d03299",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "python-ros",
+    "channel": "main",
+    "source_sha": "3c658263c6fa46b2fbd948f356ee6486bfe2e6df",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "matlab-wrapper",
+    "channel": "dev",
+    "source_sha": "4935607c4da87bef2478ce32640e0872ae146647",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "matlab-wrapper",
+    "channel": "main",
+    "source_sha": "dbead7bcad3151764a7860e8c17cf531a15a87dc",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "matlab-cli",
+    "channel": "dev",
+    "source_sha": "b97a240d728caca51dd837051ca3a7eecb083147",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  },
+  {
+    "target": "matlab-cli",
+    "channel": "main",
+    "source_sha": "4517c6dbac723369bf2413eba7d99ddf06b79e07",
+    "old": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "proposed": {
+      "repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "workflow_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      },
+      "token_permissions": {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read"
+      }
+    },
+    "delta": []
+  }
+]
