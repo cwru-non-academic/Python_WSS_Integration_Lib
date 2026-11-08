@@ -30,6 +30,7 @@ $start=$source.IndexOf('# Restore and build the authenticated fixture')
 $end=$source.IndexOf('# Recheck immutable sources and emit captured baseline evidence.',$start)
 if($start -lt 0 -or $end -le $start){throw 'Missing bounded platform execution block.'}
 $boundary=$source.Substring($start,$end-$start)
+if(!$source.Substring($end).Contains('Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit')){throw 'Final immutable fixture check missing.'}
 $restore=$boundary.IndexOf('& dotnet restore ')
 $capture=$boundary.IndexOf('$restoreProof = New-WssRestoredAssetsProof ')
 $build=$boundary.IndexOf('& dotnet build ')
