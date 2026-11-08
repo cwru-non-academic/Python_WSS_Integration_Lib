@@ -1,6 +1,7 @@
 . "$PSScriptRoot/PythonContract.ps1"
 . "$PSScriptRoot/MacOSConsumerEvidence.ps1"
 . "$PSScriptRoot/wss-ci/Preflight.ps1"
+. "$PSScriptRoot/wss-ci/Evidence.ps1"
 
 function Wait-PythonRun([string]$Repository,[string]$RunId,[string]$Sha,[string]$Workflow,[string]$Event,[int]$TimeoutSeconds=2400) {
     Wait-WssCiRun $Repository $RunId $Sha $Workflow $Event $TimeoutSeconds
@@ -150,13 +151,23 @@ function Assert-PythonRosReports($Evidence,[string]$Root) {
         if ($native.schema -cne 'wss-ros-native/v1' -or $native.passed -cne $true -or $native.channels.Count -ne 9 -or @(Compare-Object @(1..9) @($native.channels)).Count -ne 0) { throw "Missing/failed real DDS layout fixture: $name" }
     }
 }
-function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Role,$Candidate,[string]$Root,$Config) {
+function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Role,$Candidate,[string]$Root,$Config,[ref]$ReceiptSnapshot) {
+    # Never expose a stale descriptor when validation fails before capture.
+    if ($null -ne $ReceiptSnapshot) { $ReceiptSnapshot.Value=$null }
     if ($Role -ceq 'wrapper') { $expectedRepository=$PythonWrapperRepository; $requiredName='Preflight behavioral tests'; $sourceField='wrapper_sha' }
     else { $application=Get-PythonApplication $Role; $expectedRepository=$application.repository; $requiredName=$application.acceptance; $sourceField=$application.source_field }
     if ($Repository -cne $expectedRepository) { throw 'Role/repository evidence mismatch.' }
     $run=Wait-PythonRun $Repository $RunId $SourceSha 'wss-preflight.yml' 'workflow_dispatch'
+    $receiptProof=$null
+    if ($null -ne $ReceiptSnapshot) {
+        $receiptProof=Start-WssCiPreflightProof -Repository $Repository -RunId $RunId -SourceSha $SourceSha -Root "$Root-proof" -ExpectedAttempt $run.run_attempt
+        $run=$receiptProof.Run
+    }
     $contract = Get-PythonProducerContract $Candidate.commit
-    $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
+    if ($null -ne $receiptProof) { $pages=@([pscustomobject]@{jobs=$receiptProof.Jobs}) }
+    else {
+        $pages=Invoke-PythonGh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/runs/$RunId/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
+    }
     foreach ($requiredName in @(Get-PythonEvidenceJobs $Role $contract)) {
         $isPlatform = $requiredName -cmatch '^(Preflight compatibility|CLI platform compatibility|ROS platform compatibility) \('
         $required=@($pages | ForEach-Object { $_.jobs } | Where-Object {
@@ -165,7 +176,12 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
         if ($required.Count -ne 1 -or $required[0].conclusion -cne 'success') { throw "Required candidate job missing/skipped/failed: $requiredName" }
     }
     if (Test-Path -LiteralPath $Root) { throw 'Evidence download destination must be new.' }
-    $null=Invoke-PythonGh -Arguments @('run','download',$RunId,'--repo',$Repository,'--name','python-preflight-evidence','--dir',$Root)
+    if ($null -ne $receiptProof) {
+        $null=Read-WssCiPreflightArtifact -Proof $receiptProof -Name 'python-preflight-evidence' -Destination $Root
+    } else {
+        $null=Invoke-PythonGh -Arguments @('run','download',$RunId,'--repo',$Repository,'--name','python-preflight-evidence','--dir',$Root)
+
+    }
     $files=@(Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object { [IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/') })
     if (@(Compare-Object @(Get-PythonEvidenceFiles $Role) $files -CaseSensitive).Count -ne 0) { throw 'Unexpected/incomplete preflight artifact.' }
     $e=Get-Content -LiteralPath (Join-Path $Root 'evidence.json') -Raw | ConvertFrom-Json
@@ -191,7 +207,12 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
     if ($contract -ceq 'macos-ble-v1') {
         foreach ($platform in @('Windows','Ubuntu','macOS')) {
             $platformRoot = Join-Path $Root "platform-$platform"
-            $null=Invoke-PythonGh -Arguments @('run','download',$RunId,'--repo',$Repository,'--name',"python-preflight-platform-$platform",'--dir',$platformRoot)
+            if ($null -ne $receiptProof) {
+                $null=Read-WssCiPreflightArtifact -Proof $receiptProof -Name "python-preflight-platform-$platform" -Destination $platformRoot
+            } else {
+                $null=Invoke-PythonGh -Arguments @('run','download',$RunId,'--repo',$Repository,'--name',"python-preflight-platform-$platform",'--dir',$platformRoot)
+
+            }
             if ($platform -ceq 'macOS') {
                 $null=Assert-WssMacOSPair $platformRoot $Repository $RunId $SourceSha ([string]$run.run_attempt)
                 foreach ($architecture in @('x64','arm64')) {
@@ -209,32 +230,47 @@ function Get-PythonEvidence([string]$Repository,[string]$RunId,[string]$SourceSh
             Assert-PythonPlatformEvidence $proof $smoke $e $Candidate $Repository $RunId $SourceSha $Role $Config.fixture_commit $platform
         }
     }
+    if ($null -ne $ReceiptSnapshot) { $ReceiptSnapshot.Value=Complete-WssCiPreflightProof -Proof $receiptProof }
     $e
 }
-function Assert-PythonApproval($Approval,[string]$EvidenceRoot,$Config) {
+function Assert-PythonApproval($Approval,[string]$EvidenceRoot,$Config,[System.Collections.Generic.List[object]]$ReceiptSnapshots) {
     Assert-PythonProducer $Approval.candidate
     foreach ($role in @(Get-PythonApprovalRoles $Approval)) {
         $repo=if ($role -ceq 'wrapper') { $PythonWrapperRepository } else { (Get-PythonApplication $role).repository }
-        $e=Get-PythonEvidence $repo $Approval.$role.preflight_run_id $Approval.$role.source_sha $role $Approval.candidate (Join-Path $EvidenceRoot $role) $Config
+        $snapshot=$null
+        $receiptArguments=@{}
+        if ($null -ne $ReceiptSnapshots) { $receiptArguments.ReceiptSnapshot=[ref]$snapshot }
+        $e=Get-PythonEvidence $repo $Approval.$role.preflight_run_id $Approval.$role.source_sha $role $Approval.candidate (Join-Path $EvidenceRoot $role) $Config @receiptArguments
         $pairRole=if ($role -ceq 'ros') { 'ros' } else { 'cli' }
         $sourceField=(Get-PythonApplication $pairRole).source_field
         if ($e.wrapper_sha -cne $Approval.wrapper.source_sha -or $e.$sourceField -cne $Approval.$pairRole.source_sha -or
             $e.projection_sha256 -cne $Approval.projection_sha256 -or $e.fixture_sha -cne $Approval.fixture.commit -or
             $e.fixture_sha256 -cne $Approval.fixture.sha256) { throw 'Preflights did not test the approved source/candidate tuple.' }
+        if ($null -ne $ReceiptSnapshots) {
+            if ($null -eq $snapshot) { throw 'Native receipt proof snapshot missing.' }
+            $ReceiptSnapshots.Add($snapshot)
+        }
     }
 }
-function Assert-PythonMergedApplicationPreflight($Approval,[ValidateSet('cli','ros')][string]$Role,[string]$WrapperSha,[string]$ApplicationSha,[string]$RunId,[string]$Root,$Config) {
+function Assert-PythonMergedApplicationPreflight($Approval,[ValidateSet('cli','ros')][string]$Role,[string]$WrapperSha,[string]$ApplicationSha,[string]$RunId,[string]$Root,$Config,[System.Collections.Generic.List[object]]$ReceiptSnapshots) {
     if ($Role -ceq 'ros') { Assert-PythonFanoutApproval $Approval }
     Assert-PythonSha $WrapperSha
     Assert-PythonSha $ApplicationSha
     if ($RunId -cnotmatch '^[1-9][0-9]*$') { throw 'Exact merged-wrapper application preflight ID required.' }
     $application=Get-PythonApplication $Role
-    $e=Get-PythonEvidence $application.repository $RunId $ApplicationSha $Role $Approval.candidate $Root $Config
+    $snapshot=$null
+    $receiptArguments=@{}
+    if ($null -ne $ReceiptSnapshots) { $receiptArguments.ReceiptSnapshot=[ref]$snapshot }
+    $e=Get-PythonEvidence $application.repository $RunId $ApplicationSha $Role $Approval.candidate $Root $Config @receiptArguments
     if ($e.wrapper_sha -cne $WrapperSha -or $e.($application.source_field) -cne $ApplicationSha -or $e.projection_sha256 -cne $Approval.projection_sha256 -or
         $e.fixture_sha -cne $Approval.fixture.commit -or $e.fixture_sha256 -cne $Approval.fixture.sha256) { throw 'Application preflight did not test the exact accepted merged wrapper and current application source.' }
+        if ($null -ne $ReceiptSnapshots) {
+            if ($null -eq $snapshot) { throw 'Native receipt proof snapshot missing.' }
+            $ReceiptSnapshots.Add($snapshot)
+        }
 }
-function Assert-PythonMergedCliPreflight($Approval,[string]$WrapperSha,[string]$CliSha,[string]$RunId,[string]$Root,$Config) {
-    Assert-PythonMergedApplicationPreflight $Approval 'cli' $WrapperSha $CliSha $RunId $Root $Config
+function Assert-PythonMergedCliPreflight($Approval,[string]$WrapperSha,[string]$CliSha,[string]$RunId,[string]$Root,$Config,[System.Collections.Generic.List[object]]$ReceiptSnapshots) {
+    Assert-PythonMergedApplicationPreflight $Approval 'cli' $WrapperSha $CliSha $RunId $Root $Config -ReceiptSnapshots $ReceiptSnapshots
 }
 function Get-PythonApplicationPreflightMarker([ValidateSet('cli','ros')][string]$Role,[string]$WrapperSha,[string]$ApplicationSha,[string]$RunId) {
     Assert-PythonSha $WrapperSha
