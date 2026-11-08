@@ -2,7 +2,10 @@ param([string]$PythonExe='python',[string]$CliRoot='')
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 if(!$CliRoot){$CliRoot=Join-Path (Split-Path $root) 'CLI_Python_WSS_Application'}
-$temp=Join-Path ([IO.Path]::GetTempPath()) ('python-candidate-binding-'+[guid]::NewGuid().ToString('N'))
+$tempParent=[IO.Path]::GetTempPath()
+if(!$IsWindows){Push-Location $tempParent;try{$tempParent=(& /bin/pwd -P).Trim();if($LASTEXITCODE -ne 0 -or !$tempParent){throw 'Cannot resolve physical fixture parent.'}}finally{Pop-Location}}
+$tempParent=[IO.Path]::GetFullPath($tempParent).TrimEnd([IO.Path]::DirectorySeparatorChar)
+$temp=Join-Path $tempParent ('python-candidate-binding-'+[guid]::NewGuid().ToString('N'))
 $count=0
 function Check($Ok,$Message){if(!$Ok){throw $Message};$script:count++}
 function Reject([scriptblock]$Action){$failed=$false;try{& $Action|Out-Null}catch{$failed=$true};Check $failed 'Invalid candidate/tooling source accepted.'}
@@ -69,7 +72,7 @@ try {
     } finally {Pop-Location}
 } finally {
     foreach($n in $names){[Environment]::SetEnvironmentVariable($n,$saved[$n])}
-    $full=[IO.Path]::GetFullPath($temp);$parent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $full=[IO.Path]::GetFullPath($temp);$parent=$tempParent
     if((Split-Path $full -Parent) -cne $parent -or (Split-Path $full -Leaf) -cnotmatch '^python-candidate-binding-[a-f0-9]{32}$'){throw 'Unsafe fixture cleanup root'}
     Remove-Item -LiteralPath $full -Recurse -Force
 }
