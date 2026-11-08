@@ -42,7 +42,9 @@ if($Mode -ceq 'committed') {
     if(!$?){throw 'Ordinary capability-profile validation failed.'}
     return
 }
-if($ToolsRoot -or $ToolsSha){throw 'Candidate validation does not accept ordinary tooling overrides.'}
+. "$PSScriptRoot/PythonProfiles/Tooling.ps1"
+$candidateTooling=Resolve-PythonCandidateTooling -ToolsRoot $ToolsRoot -ToolsSha $ToolsSha -ConfigPath $ConfigPath -WrapperRoot $WrapperRoot -WrapperSha $WrapperSha
+$productConfigPath=$candidateTooling.product_config_path
 $previousStage = $env:WSS_CONFORMANCE_STAGE
 try {
 # Ordinary and candidate callers must execute both isolated stages by default.
@@ -56,13 +58,13 @@ if ($Stage -ceq 'all') {
     $options.OutputRoot = Join-Path $OutputRoot 'multi'
     & $PSCommandPath @options
     $single = Get-Content (Join-Path $OutputRoot 'evidence.json') -Raw | ConvertFrom-Json
-    Assert-PythonMultiStageEvidence $OutputRoot $single (Resolve-PythonTestSource $WrapperRoot $WrapperSha $ConfigPath $TestRoot $TestSha $TestRepository $TestSelectionId).contract
+    Assert-PythonMultiStageEvidence $OutputRoot $single (Resolve-PythonTestSource $WrapperRoot $WrapperSha $productConfigPath $TestRoot $TestSha $TestRepository $TestSelectionId).contract
     return
 }
 
 $env:WSS_CONFORMANCE_STAGE=$Stage
-$productConfig=Read-PythonConfig $ConfigPath
-$tests=Resolve-PythonTestSource $WrapperRoot $WrapperSha $ConfigPath $TestRoot $TestSha $TestRepository $TestSelectionId
+$productConfig=$candidateTooling.config
+$tests=Resolve-PythonTestSource $WrapperRoot $WrapperSha $productConfigPath $TestRoot $TestSha $TestRepository $TestSelectionId
 $config=$tests.contract
 # Runtime and release authority always come from the product, never selected tests.
 foreach ($field in @('automated_execution','dotnet_sdk','python_version','pythonnet_version')) { $config | Add-Member -NotePropertyName $field -NotePropertyValue $productConfig.$field -Force }
@@ -109,7 +111,7 @@ try { $sdk=(& dotnet --version).Trim(); if ($LASTEXITCODE -ne 0 -or $sdk -cne $c
 $logPath=Join-Path $OutputRoot 'dotnet.log'
 $errorPath=Join-Path $OutputRoot 'dotnet-stderr.log'
 $nunit=Join-Path $OutputRoot 'nunit'
-$arguments=@('test','Wss.DotNet.Conformance.Tests.csproj','--logger','"trx;LogFileName=results.trx"','--results-directory',('"'+(Join-Path $OutputRoot 'test-results')+'"'),'--blame-hang-timeout','2m','--',('NUnit.TestOutputXml="'+$nunit+'"'))
+$arguments=@('test','Wss.DotNet.Conformance.Tests.csproj','-p:DisablePackageAssetsCache=true','--logger','"trx;LogFileName=results.trx"','--results-directory',('"'+(Join-Path $OutputRoot 'test-results')+'"'),'--blame-hang-timeout','2m','--',('NUnit.TestOutputXml="'+$nunit+'"'))
 $process=Start-Process -FilePath (Get-Command dotnet).Source -WorkingDirectory $harness -ArgumentList $arguments -WindowStyle Hidden -RedirectStandardOutput $logPath -RedirectStandardError $errorPath -PassThru
 if (!$process.WaitForExit($TimeoutSeconds*1000)) { $process.Kill($true); $process.WaitForExit(); throw 'Disposable .NET conformance timed out; no acceptance evidence emitted.' }
 if ((Get-Item -LiteralPath $errorPath).Length) { [IO.File]::AppendAllText($logPath,[IO.File]::ReadAllText($errorPath)) }
@@ -128,6 +130,7 @@ Assert-PythonProjection $projectionRoot $projection
 Assert-PythonSource $WrapperRoot $WrapperSha
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
 Assert-PythonTestSource $tests
+Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath
 $inputs=Get-Content -LiteralPath (Join-Path $harness 'conformance-inputs.json') -Raw | ConvertFrom-Json
 if ($inputs.assertion_expressions -ne 20 -or $inputs.canonical_fixture_sha256 -cne $config.fixture_sha256) { throw 'Harness provenance mismatch.' }
 $evidence=[ordered]@{
