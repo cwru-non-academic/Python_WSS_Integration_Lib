@@ -20,3 +20,10 @@ foreach($role in @('cli','ros')) {
     Reject {Read-PythonReceiptApplicationMarker "<!-- wss-python-$role-preflight:v1 $encoded -->" $role}
 }
 Write-Output 'PASS: frozen paired sources and canonical unambiguous merged-wrapper marker rejection checks.'
+
+# Keep receipt proof binding and real bridge composition mandatory in the hosted
+# family contract suite. Child processes isolate transport fixtures from callers.
+& pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-NativeReceiptBinding.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Native receipt binding contract tests failed.' }
+& pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-NativeReceiptComposition.ps1') -Channel (Get-WssCiChannel)
+if ($LASTEXITCODE -ne 0) { throw 'Native receipt bridge composition tests failed.' }
