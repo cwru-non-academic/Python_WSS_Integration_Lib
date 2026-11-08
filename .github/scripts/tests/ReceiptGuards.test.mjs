@@ -30,9 +30,11 @@ test('only the exact human merged bot dependency PR can be accepted',()=>{
 });
 test('emitter is read-only reconciliation at exact actual merge, never PR/fork source',()=>{
   const env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:target.repository,GITHUB_REF:'refs/heads/dev',GITHUB_SHA:pr.merge_commit_sha,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ID:'100',GITHUB_RUN_ATTEMPT:'1'};
+  env.GITHUB_WORKFLOW_SHA=pr.merge_commit_sha;
+  env.GITHUB_WORKFLOW_REF=`${target.repository}/${RECEIPT_WORKFLOW}@refs/heads/dev`;
   const r={...run,path:RECEIPT_WORKFLOW,event:'workflow_dispatch'};
   emitter(r,env,target,pr.merge_commit_sha);
-  for(const change of [{GITHUB_SHA:'f'.repeat(40)},{GITHUB_REF:'refs/heads/main'},{GITHUB_EVENT_NAME:'pull_request'},{GITHUB_RUN_ATTEMPT:'2'}]) assert.throws(()=>emitter(r,{...env,...change},target,pr.merge_commit_sha));
+  for(const change of [{GITHUB_WORKFLOW_SHA:'f'.repeat(40)},{GITHUB_WORKFLOW_REF:'other/workflow@refs/heads/dev'},{GITHUB_SHA:'f'.repeat(40)},{GITHUB_REF:'refs/heads/main'},{GITHUB_EVENT_NAME:'pull_request'},{GITHUB_RUN_ATTEMPT:'2'}]) assert.throws(()=>emitter(r,{...env,...change},target,pr.merge_commit_sha));
 });
 test('preparation/no-op state cannot manufacture a merged-pr acceptance',()=>{
   changedHead('a'.repeat(40),{head_sha:'b'.repeat(40)});
