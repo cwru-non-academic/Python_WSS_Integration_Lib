@@ -79,6 +79,34 @@ if ($LASTEXITCODE -ne 0) { throw 'Wheel installation failed.' }
 $stagedPayload = Join-Path $installed 'Cs_Libraries'
 Copy-Item -LiteralPath $payload -Destination $stagedPayload -Recurse
 Assert-PythonProjection $stagedPayload $projection
+# Restore and build the authenticated fixture before any selected test code runs.
+$env:WSS_ARTIFACT_DIR = $stagedPayload
+$env:WSS_BLE_ARTIFACT_DIR = $stagedPayload
+$project = Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
+$buildRoot = Join-Path $OutputRoot 'shared-build'
+$projectAssetsFile = Join-Path $buildRoot 'obj/Wss.CSharpImplementation.Tests/project.assets.json'
+@{sdk=@{version=$config.dotnet_sdk;rollForward='disable'}} | ConvertTo-Json | Set-Content (Join-Path $OutputRoot 'global.json')
+. "$PSScriptRoot/wss-ci/restored-assets/RestoredAssets.ps1"
+. "$PSScriptRoot/SelectedParentSnapshot.ps1"
+Push-Location $OutputRoot
+try {
+    & dotnet restore $project --artifacts-path $buildRoot -p:Configuration=Release -p:TreatWarningsAsErrors=true -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
+    if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform restore failed.' }
+    $restoreProof = New-WssRestoredAssetsProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+    & dotnet build $project -c Release --artifacts-path $buildRoot --no-restore -p:TreatWarningsAsErrors=true -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
+    if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform build failed.' }
+} finally { Pop-Location }
+$testOutputs = @(Get-ChildItem -LiteralPath (Join-Path $buildRoot 'bin/Wss.CSharpImplementation.Tests') -Filter 'Wss.CSharpImplementation.Tests.dll' -Recurse -File)
+if ($testOutputs.Count -ne 1) { throw 'Expected one isolated shared platform build output.' }
+$builtPayload = $testOutputs[0].Directory.FullName
+$platformSnapshot = New-SelectedParentSnapshot @($buildRoot,(Join-Path $PSScriptRoot 'wss-ci/restored-assets')) @((Join-Path $OutputRoot 'global.json'))
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
+if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
+Assert-PythonProjection $stagedPayload $projection
+Assert-SelectedParentSnapshot $platformSnapshot
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project -RestoreProof $restoreProof
+if (!$?) { throw 'Platform build payload propagation failed.' }
 $env:PYTHONNET_RUNTIME = 'coreclr'
 $env:PYTHONPATH = $installed
 $env:PYTHONDONTWRITEBYTECODE = '1'
@@ -90,25 +118,25 @@ try {
     & $PythonExe (Join-Path $tests.root 'conformance/platform_smoke.py') @options
     if ($LASTEXITCODE -ne 0) { throw 'Installed Python platform smoke failed.' }
 } finally { Pop-Location }
-# Run the identical C# platform tests against the payload consumed by Python.
-# These test real backend/dependency/native loading, not emulator semantics.
-$env:WSS_ARTIFACT_DIR = $stagedPayload
-$env:WSS_BLE_ARTIFACT_DIR = $stagedPayload
-$project = Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
-$buildRoot = Join-Path $OutputRoot 'shared-build'
-@{sdk=@{version=$config.dotnet_sdk;rollForward='disable'}} | ConvertTo-Json | Set-Content (Join-Path $OutputRoot 'global.json')
+# Recheck the original parent proof before executing the already built fixture.
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
+if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
+Assert-PythonProjection $stagedPayload $projection
+Assert-SelectedParentSnapshot $platformSnapshot
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project -RestoreProof $restoreProof
+if (!$?) { throw 'Platform build payload propagation failed.' }
 Push-Location $OutputRoot
 try {
-    & dotnet test $project -c Release --artifacts-path $buildRoot --filter 'FullyQualifiedName~SerialRuntimeSelectionTests|FullyQualifiedName~BleBackendLoadingTests' --logger 'trx;LogFileName=platform.trx' --results-directory $OutputRoot -p:TreatWarningsAsErrors=true
+    & dotnet test $project -c Release --artifacts-path $buildRoot --no-restore --no-build --filter 'FullyQualifiedName~SerialRuntimeSelectionTests|FullyQualifiedName~BleBackendLoadingTests' --logger 'trx;LogFileName=platform.trx' --results-directory $OutputRoot -p:TreatWarningsAsErrors=true -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
     if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform compatibility tests failed.' }
 } finally { Pop-Location }
-$testOutputs = @(Get-ChildItem -LiteralPath (Join-Path $buildRoot 'bin/Wss.CSharpImplementation.Tests') -Filter 'Wss.CSharpImplementation.Tests.dll' -Recurse -File)
-if ($testOutputs.Count -ne 1) { throw 'Expected one isolated shared platform build output.' }
-$builtPayload = $testOutputs[0].Directory.FullName
-# Use reviewed bootstrap tooling for both unchanged fixture profiles. The test
-# project's restore layout is fixed by the explicit --artifacts-path above.
-$projectAssetsFile = Join-Path $buildRoot 'obj/Wss.CSharpImplementation.Tests/project.assets.json'
-& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
+if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
+Assert-PythonProjection $stagedPayload $projection
+Assert-SelectedParentSnapshot $platformSnapshot
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project -RestoreProof $restoreProof
 if (!$?) { throw 'Platform build payload propagation failed.' }
 foreach ($relative in @(Get-PythonProjectionFiles $projection)) {
     if ($relative -ceq 'System.IO.Ports.dll') { continue } # Verified NuGet runtime selection above.
