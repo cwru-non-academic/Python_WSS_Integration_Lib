@@ -16,17 +16,12 @@ Assert-PythonFanoutApproval $approval
 Assert-PythonSameCandidate $approval.candidate $ctx.plan.candidate
 Assert-PythonReceiptSnapshots $approval $ctx.plan
 $config=Read-PythonConfig (Join-Path $ToolsRoot '.github/python-ci.json') -Channel (Get-WssCiChannel)
-$preflights=@()
-foreach ($role in @('wrapper','cli','ros')) {
-    $targetId=if ($role -ceq 'wrapper') { 'python-wrapper' } else { 'python-'+$role }
-    $repo=if ($role -ceq 'wrapper') { $PythonWrapperRepository } else { (Get-PythonApplication $role).repository }
-    $preflights += [pscustomobject]@{repository=$repo;run_id=[string]$approval.$role.preflight_run_id;source_sha=$approval.$role.source_sha;workflow='.github/workflows/wss-preflight.yml'}
-}
+$preflights=[System.Collections.Generic.List[object]]::new()
 # Preserve all existing rich, native, platform and paired-source proof checks.
 Assert-PythonProducer $approval.candidate
 & (Join-Path $ToolsRoot '.github/scripts/Resolve-WssRelease.ps1') -RunId $approval.candidate.run_id -ExpectedArtifactId $approval.candidate.artifact_id -ExpectedCommit $approval.candidate.commit -ArchiveName $approval.candidate.archive -ExpectedSha256 $approval.candidate.sha256 -OutputRoot (Join-Path $WorkRoot 'resolved')
 if (!$?) { throw 'Exact candidate archive validation failed.' }
-Assert-PythonApproval $approval (Join-Path $WorkRoot 'approval-evidence') $config
+Assert-PythonApproval $approval (Join-Path $WorkRoot 'approval-evidence') $config -ReceiptSnapshots $preflights
 if ($ctx.target.role -ceq 'wrapper') {
     Assert-PythonMergedWrapper $ctx.head ([string]$ctx.pr.number) $approval
 } else {
@@ -41,11 +36,10 @@ if ($ctx.target.role -ceq 'wrapper') {
     $parent=Invoke-PythonGh -Arguments @('api',"repos/$PythonWrapperRepository/pulls/$($parentPrs[0].number)") | ConvertFrom-Json
     if ($parent.merged_by.type -cne 'User') { throw 'Wrapper parent merge must be human reviewed.' }
     Assert-PythonMergedWrapper $fresh.wrapper_sha ([string]$parent.number) $approval
-    Assert-PythonMergedApplicationPreflight $approval $role $fresh.wrapper_sha $source ([string]$fresh.preflight_run_id) (Join-Path $WorkRoot 'merged-application-evidence') $config
+    Assert-PythonMergedApplicationPreflight $approval $role $fresh.wrapper_sha $source ([string]$fresh.preflight_run_id) (Join-Path $WorkRoot 'merged-application-evidence') $config -ReceiptSnapshots $preflights
     $delta=Invoke-PythonGh -Arguments @('api',"repos/$($application.repository)/compare/${source}...$($ctx.head)") | ConvertFrom-Json
     if ($delta.status -cne 'ahead' -or $delta.total_commits -lt 1 -or $delta.files.Count -ne 1) { throw 'Application merge is not the exact frozen-source gitlink update.' }
     Assert-PythonDiff @($delta.files.filename) @($application.gitlink)
-    $preflights += [pscustomobject]@{repository=$application.repository;run_id=[string]$fresh.preflight_run_id;source_sha=$source;workflow='.github/workflows/wss-preflight.yml'}
 }
-ConvertTo-Json -InputObject $preflights -Depth 5 | Set-Content -LiteralPath $OutputPath
+ConvertTo-Json -InputObject @($preflights.ToArray()) -Depth 10 | Set-Content -LiteralPath $OutputPath
 Write-Output 'Existing v2 approval, canonical bytes, actual reviewed merge and full receiver-specific proofs verified; no publication mutation performed.'
