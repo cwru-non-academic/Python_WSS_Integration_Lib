@@ -105,7 +105,10 @@ try {
 $testOutputs = @(Get-ChildItem -LiteralPath (Join-Path $buildRoot 'bin/Wss.CSharpImplementation.Tests') -Filter 'Wss.CSharpImplementation.Tests.dll' -Recurse -File)
 if ($testOutputs.Count -ne 1) { throw 'Expected one isolated shared platform build output.' }
 $builtPayload = $testOutputs[0].Directory.FullName
-& (Join-Path $FixtureRoot '.github/scripts/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload
+# Use reviewed bootstrap tooling for both unchanged fixture profiles. The test
+# project's restore layout is fixed by the explicit --artifacts-path above.
+$projectAssetsFile = Join-Path $buildRoot 'obj/Wss.CSharpImplementation.Tests/project.assets.json'
+& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
 if (!$?) { throw 'Platform build payload propagation failed.' }
 foreach ($relative in @(Get-PythonProjectionFiles $projection)) {
     if ($relative -ceq 'System.IO.Ports.dll') { continue } # Verified NuGet runtime selection above.
