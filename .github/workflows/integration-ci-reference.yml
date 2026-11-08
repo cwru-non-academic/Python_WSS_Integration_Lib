@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: d52ea2e6f2a8950d11c906545622ee5e8e40bdf0
+          ref: 60257c5c1be34b562fb171d5be10a61429f14d61
           path: .ci-reference/Core
           persist-credentials: false
       - run: node --test .github/scripts/wss-ci/tests/*.test.mjs
