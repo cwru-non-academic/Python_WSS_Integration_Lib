@@ -7,6 +7,8 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {CORE,CORE_JOBS,digest,bytesDigest} from '../verify.mjs';
 import {channelContext} from '../channels.mjs';
+import {CAMPAIGN_TEST_POLICY,selectionRequest,selectionFields,targetTestEvidence,selectedTestArtifactName} from '../campaign-test-selection.mjs';
+import {resolveTestSelection} from '../test-selection-contract.mjs';
 const here=dirname(fileURLToPath(import.meta.url));
 const coreSource=resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core');
 const base=mkdtempSync(join(tmpdir(),'wss receipt \u03a9 '));
@@ -262,3 +264,65 @@ for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main']
  ['replaced native artifact',f=>f.proofs[0].artifacts[0].id='9999'],
  ['expired native artifact',f=>{const get=f.g.get;f.g.get=path=>{const v=get(path);return path.includes('/actions/artifacts/')?{...v,expired:true}:v;};}]
 ])test(`${id}/${channel}: ${name} rejects after native without output`,async()=>{const f=fixture(id,channel);mutate(f);await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_PROOF');assert.ok(existsSync(f.env.WSS_TEST_SENTINEL));assert.equal(existsSync(f.config.outputRoot),false);assert.equal(existsSync(f.env.GITHUB_OUTPUT),false);});
+
+// Final admission must follow proof IO. These callbacks change only synthetic
+// read evidence or temporary fixture Git checkouts, never real GitHub state.
+function duringFinalProof(f,mutate,{logs=false}={}) {
+ let reads=0,fired=false;
+ const act=()=>{if(++reads===f.proofs.length+1){fired=true;mutate();}};
+ if(logs){const bytes=Buffer.from('authenticated native fixture log');for(const d of f.proofs)d.logs=[{job_id:'900',sha256:bytesDigest(bytes)}];f.g.jobLogBytes=()=>{act();return bytes;};}
+ else {const original=f.g.artifactBytes;f.g.artifactBytes=(repo,id)=>{const bytes=original(repo,id);if(Number(id)<2000)act();return bytes;};}
+ return ()=>assert.equal(fired,true,'The mutation must occur in the final native proof pass');
+}
+function noReceipt(f) {assert.equal(existsSync(f.config.outputRoot),false);assert.equal(existsSync(f.env.GITHUB_OUTPUT),false);assert.equal(existsSync(f.env.WSS_TEST_SENTINEL),true);}
+const lateMutations=[
+ ['target head',f=>{f.state.late=true;}],
+ ['Core head',f=>{const head=f.g.head;f.g.head=(repo,branch)=>repo===CORE?sha(9):head(repo,branch);}],
+ ['parent head',f=>{const head=f.g.head;f.g.head=(repo,branch)=>repo!==CORE&&repo!==f.env.GITHUB_REPOSITORY?sha(9):head(repo,branch);}],
+ ['workflow tree',f=>{const object=f.g.object;f.g.object=(repo,ref,path)=>path==='.github/workflows'?{type:'tree',sha:sha(9)}:object(repo,ref,path);}],
+ ['normal attempt',f=>{f.normal.run_attempt=2;}],
+ ['normal ID',f=>{f.state.normal=[{...f.normal,id:21}];}],
+ ['ambiguous normal run',f=>{f.state.normal.push({...f.normal,id:21});}],
+ ['normal status',f=>{f.normal.status='in_progress';f.normal.conclusion=null;}],
+ ['normal source',f=>{f.normal.head_sha=sha(9);}],
+ ['normal jobs',f=>{const jobs=f.g.jobs;f.g.jobs=(repo,r)=>String(r.id)==='20'?[]:jobs(repo,r);}],
+ ['dirty root',f=>put(f.source,'untracked-native-file','changed during final IO')],
+ ['root HEAD',f=>{commit(f.source);}]
+];
+for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main'])for(const name of ['target head','normal attempt'])test(`${id}/${channel}: final admission rejects ${name} movement during last artifact IO`,async()=>{
+ const f=fixture(id,channel),mutation=lateMutations.find(([label])=>label===name)[1],assertFired=duringFinalProof(f,()=>mutation(f));
+ await assert.rejects(f.run(),error=>error.code==='WSS_RECEIPT_RECHECK');assertFired();noReceipt(f);
+});
+for(const channel of ['dev','main'])for(const [name,mutate] of lateMutations.filter(([name])=>!['target head','normal attempt'].includes(name)))test(`python-cli/${channel}: final admission rejects ${name} movement during last artifact IO`,async()=>{
+ const f=fixture('python-cli',channel),assertFired=duringFinalProof(f,()=>mutate(f));
+ try{await assert.rejects(f.run(),error=>error.code==='WSS_RECEIPT_RECHECK');assertFired();noReceipt(f);}
+ finally{if(name==='root HEAD')cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])test(`python-cli/${channel}: final admission rejects target movement during last native log IO`,async()=>{
+ const f=fixture('python-cli',channel),assertFired=duringFinalProof(f,()=>{f.state.late=true;},{logs:true});
+ await assert.rejects(f.run(),error=>error.code==='WSS_RECEIPT_RECHECK');assertFired();noReceipt(f);
+});
+for(const channel of ['dev','main'])for(const change of ['target head','dirty root','ambiguous normal run'])test(`python-cli/${channel}: final admission rejects ${change} movement during normal metadata reads`,async()=>{
+ const f=fixture('python-cli',channel),jobs=f.g.jobs;let fired=false;
+ f.g.jobs=(repo,r)=>{const result=jobs(repo,r);if(String(r.id)==='20'&&existsSync(f.env.WSS_TEST_SENTINEL)&&!fired){fired=true;lateMutations.find(([name])=>name===change)[1](f);}return result;};
+ await assert.rejects(f.run(),error=>error.code==='WSS_RECEIPT_RECHECK');assert.equal(fired,true);noReceipt(f);
+});
+function selectedFixture(channel) {
+ cases.delete(`python-cli/${channel}`);const f=fixture('python-cli',channel),p=f.plan;
+ p.manifest.test_selection_policy={schema:CAMPAIGN_TEST_POLICY,targets:p.manifest.targets.map(t=>({id:t.id,repository:t.repository,default_test_repository:'cwru-non-academic/TestBundle',allowed_test_repositories:['cwru-non-academic/TestBundle']}))};
+ const selection=resolveTestSelection(selectionRequest(p.manifest,p.candidate),{head:()=>sha(7)});
+ Object.assign(p,selectionFields(p.manifest,p.candidate,selection));p.manifest_sha256=digest(p.manifest);const {plan_id,...body}=p;p.plan_id=digest(body);f.env.PLAN_ID=p.plan_id;
+ const artifact=f.g.artifact,download=f.g.download,requests=[];
+ f.g.artifact=(repo,id,name)=>{if(!name.startsWith('wss-selected-tests-'))return artifact(repo,id,name);const run=f.g.run(repo,id);requests.push({id:String(id),name});return {id:9000+Number(id),name,expired:false,workflow_run:{id:run.id,head_sha:run.head_sha}};};
+ f.g.download=(repo,id,name,files)=>name.startsWith('wss-selected-tests-')?{'evidence.json':Buffer.from(JSON.stringify(targetTestEvidence(p,p.manifest.targets.find(t=>t.repository===repo).id)))}:download(repo,id,name,files);
+ return {...f,requests};
+}
+for(const channel of ['dev','main'])test(`python-cli/${channel}: final admission retains selected evidence for the captured normal attempt`,async()=>{
+ const f=selectedFixture(channel);try{const receipt=await f.run();assert.deepEqual(receipt.selected_tests,targetTestEvidence(f.plan,'python-cli'));assert.deepEqual(receipt.normal_ci,{run_id:'20',attempt:1});assert.ok(f.requests.some(r=>r.id==='20'&&r.name===selectedTestArtifactName('python-cli',1)));}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])test(`python-cli/${channel}: final admission rejects obsolete selected evidence after normal attempt movement`,async()=>{
+ const f=selectedFixture(channel),download=f.g.download,run=f.g.run;let moved=false;
+ f.g.run=(repo,id)=>{const result=run(repo,id);return moved&&String(id)==='20'?{...result,run_attempt:2}:result;};
+ f.g.download=(repo,id,name,files)=>{const result=download(repo,id,name,files);if(String(id)==='20'&&name===selectedTestArtifactName('python-cli',1))moved=true;return result;};
+ try{await assert.rejects(f.run(),error=>error.code==='WSS_RECEIPT_RECHECK');assert.equal(moved,true);noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
+});
