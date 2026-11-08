@@ -21,6 +21,12 @@ const manifest=JSON.parse(readFileSync(join(core,'tools/ci/sync-tooling.json')))
 const {expectedLock,sourceBytes}=await import(pathToFileURL(join(core,'tools/ci/sync-tooling.mjs')));
 const {receiptProfiles,renderReceiptWorkflow}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt-workflows.mjs')));
 const {runReceipt,readOnlyGh}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt.mjs')));
+const zipCache=new Map();
+function candidateZip(candidate) {
+ const text=JSON.stringify(candidate);if(zipCache.has(text))return zipCache.get(text);
+ const dir=mkdtempSync(join(tmpdir(),'receipt-candidate-zip-'));
+ try {writeFileSync(join(dir,'candidate.json'),text);writeFileSync(join(dir,'zip.ps1'),'param([string]$Source,[string]$Destination)\n$ErrorActionPreference="Stop"; Compress-Archive -LiteralPath $Source -DestinationPath $Destination');execFileSync('pwsh',['-NoProfile','-File',join(dir,'zip.ps1'),join(dir,'candidate.json'),join(dir,'proof.zip')]);const bytes=readFileSync(join(dir,'proof.zip'));zipCache.set(text,bytes);return bytes;}finally{rmSync(dir,{recursive:true,force:true});}
+}
 const sha=n=>String(n).repeat(40);
 const stub=`param([string]$TargetId,[string]$ProducerRunId,[string]$PlanId,[string]$ContextPath,[string]$ToolsRoot,[string]$WorkRoot,[string]$OutputPath)
 $ErrorActionPreference='Stop'
@@ -57,15 +63,18 @@ function fixture(id,channel){
  const body={schema:context.planSchema,channel,candidate,manifest:m,manifest_sha256:digest(m),target_snapshots:snapshots,workflow_snapshots:{schema:channel==='main'?'wss-workflow-snapshots/v2':'wss-workflow-snapshots/v1',targets:ws}},plan={...body,plan_id:digest(body)};
  const pr={number:10,merged:true,state:'closed',merge_commit_sha:head,merged_at:'2026-11-01T00:00:00Z',user:{type:'Bot'},merged_by:{type:'User'},base:{ref:channel,repo:{full_name:t.repository}},head:{sha:sha(4),ref:`automation/${profile.family}-wss-1-${candidate.sha256}`,repo:{full_name:t.repository}}};
  const identity={repository:{full_name:t.repository},head_repository:{full_name:t.repository},head_sha:head,head_branch:channel,run_attempt:1},normal={...identity,id:20,path:t.workflow,event:'push',status:'completed',conclusion:'success',created_at:'2026-11-01T00:01:00Z'};
- const proofs=Array.from({length:profile.preflights},(_,i)=>({repository:t.repository,run_id:String(30+i),source_sha:sha(2),workflow:'.github/workflows/wss-preflight.yml'}));
+ const proofs=Array.from({length:profile.preflights},(_,i)=>({repository:t.repository,run_id:String(30+i),source_sha:sha(2),workflow:'.github/workflows/wss-preflight.yml',attempt:1,jobs:[{id:'900',name:'Native proof',status:'completed',conclusion:'success'}],artifacts:[{id:String(1000+i),name:'rich-proof',digest:'sha256:'+bytesDigest(Buffer.from('rich proof ZIP'))}],logs:[]}));
  const producer={id:1,repository:{full_name:CORE},head_repository:{full_name:CORE},head_sha:sha(1),head_branch:channel,path:'.github/workflows/artifacts.yml',event:'push',status:'completed',conclusion:'success',run_attempt:1},artifact={id:2,name:'universal-release-assets',expired:false,workflow_run:{id:1,head_sha:sha(1)}};
+ const richBytes=Buffer.from('rich proof ZIP'),candidateBytes=candidateZip(candidate);
+ const proofArtifact=(run,name)=>({id:(name==='rich-proof'?1000:2000)+Number(run)-30,name,digest:'sha256:'+bytesDigest(name==='rich-proof'?richBytes:candidateBytes),expired:false,workflow_run:{id:Number(run),head_sha:sha(2)}});
  const state={normal:[normal],associations:[pr],proofs,late:false};
  const g={head:(repo,branch)=>repo===CORE?sha(1):repo===t.repository?(state.late&&existsSync(env.WSS_TEST_SENTINEL)?sha(9):head):V,
- get:path=>path.includes('/contents/')?{type:'file',encoding:'base64',content:Buffer.from(JSON.stringify(m)).toString('base64')}:pr,
+ get:path=>path.includes('/actions/artifacts/')?proofArtifact(String(30+Number(path.split('/').at(-1))%1000),Number(path.split('/').at(-1))<2000?'rich-proof':'wss-candidate-provenance'):path.includes('/contents/')?{type:'file',encoding:'base64',content:Buffer.from(JSON.stringify(m)).toString('base64')}:pr,
  run:(repo,run)=>String(run)==='1'?producer:String(run)==='99'?{...identity,id:99,event:'workflow_dispatch',path:'.github/workflows/release-receipt.yml'}:String(run)==='20'?normal:{...identity,id:Number(run),head_sha:sha(2),event:'workflow_dispatch',path:'.github/workflows/wss-preflight.yml',status:'completed',conclusion:'success'},
- pages:path=>path.includes('/commits/')?state.associations:state.normal,
+ pages:path=>path.includes('/artifacts')?['rich-proof','wss-candidate-provenance'].map(name=>proofArtifact(path.split('/runs/')[1].split('/')[0],name)):path.includes('/commits/')?state.associations:state.normal,
+ artifactBytes:(repo,id)=>Number(id)<2000?richBytes:candidateBytes,
  object:(repo,ref,path)=>path==='.github/workflows'?{type:'tree',sha:git(source,'rev-parse','HEAD:.github/workflows')}:Object.values(t.parents).includes(path)?{type:'commit',mode:'160000',sha:V}:{sha:snapshots[id].trusted[path]},
- jobs:(repo,r)=>(repo===CORE?CORE_JOBS:t.jobs).map(name=>({name,status:'completed',conclusion:'success'})),artifact:()=>artifact,tree:()=>sha(6),
+ jobs:(repo,r)=>r.path==='.github/workflows/wss-preflight.yml'?[{id:900,name:'Native proof',status:'completed',conclusion:'success'}]:(repo===CORE?CORE_JOBS:t.jobs).map(name=>({name,status:'completed',conclusion:'success'})),artifact:()=>artifact,tree:()=>sha(6),
  download:(repo,run,name)=>name==='wss-propagation-plan'?{'plan.json':Buffer.from(JSON.stringify(plan))}:name==='universal-release-assets'?{[candidate.archive]:zip,'SHA256SUMS.txt':Buffer.from(`${candidate.sha256}  ${candidate.archive}\n`)}:{'candidate.json':Buffer.from(JSON.stringify(candidate))}};
  const env={...process.env,GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_REF:context.ref,GITHUB_SHA:head,GITHUB_REPOSITORY:t.repository,GITHUB_RUN_ID:'99',GITHUB_RUN_ATTEMPT:'1',TARGET_ID:id,PRODUCER_RUN_ID:'1',PLAN_ID:plan.plan_id,WSS_CI_CHANNEL:channel,GITHUB_WORKFLOW_SHA:head,GITHUB_WORKFLOW_REF:`${t.repository}/.github/workflows/release-receipt.yml@refs/heads/${channel}`,WSS_RECEIPT_ENGINE_SHA:P,WSS_RECEIPT_CORE_SHA:C,WSS_RECEIPT_VALIDATOR_SHA:V,WSS_TEST_SENTINEL:join(home,'native ran.txt'),WSS_TEST_PROOFS:join(home,'proofs.json'),WSS_TEST_MODE:'',GITHUB_OUTPUT:join(home,'outputs.txt')};
  const config={sourceRoot:source,toolsRoot:profile.receipt.adapter_owner==='receiver'?source:validator,validatorRoot:validator,integrationRoot:integration,engineRoot:owner,coreRoot:core,outputRoot:join(home,'output')};
@@ -145,3 +154,15 @@ test('all18 generated product checkouts retain historical sources required by na
   assert.match(checkouts.find(block=>block.includes('          path: accepted\n')),/ref: \$\{\{ github.sha \}\}/);
  }
 });
+
+for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main'])for(const late of [false,true])test(`${id}/${channel}: native attempt movement ${late?'at final recheck':'after adapter return'} never emits`,async()=>{
+ const f=fixture(id,channel),run=f.g.run;let reads=0;f.g.run=(repo,id)=>{const r=run(repo,id);if(r.path==='.github/workflows/wss-preflight.yml'&&++reads>(late?receiptProfiles[f.env.TARGET_ID].preflights*2:0))return {...r,run_attempt:2};return r;};
+ await assert.rejects(f.run(),e=>e.code===`WSS_RECEIPT_${late?'RECHECK':'PROOF'}`);assert.ok(existsSync(f.env.WSS_TEST_SENTINEL));assert.equal(existsSync(f.config.outputRoot),false);assert.equal(existsSync(f.env.GITHUB_OUTPUT),false);
+});
+for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main'])for(const [name,mutate] of [
+ ['missing observed attempt',f=>delete f.proofs[0].attempt],
+ ['invalid observed attempt',f=>f.proofs[0].attempt=0],
+ ['changed native job status',f=>{const jobs=f.g.jobs;f.g.jobs=(repo,r)=>r.path==='.github/workflows/wss-preflight.yml'?jobs(repo,r).map(j=>({...j,conclusion:'skipped'})):jobs(repo,r);}],
+ ['replaced native artifact',f=>f.proofs[0].artifacts[0].id='9999'],
+ ['expired native artifact',f=>{const get=f.g.get;f.g.get=path=>{const v=get(path);return path.includes('/actions/artifacts/')?{...v,expired:true}:v;};}]
+])test(`${id}/${channel}: ${name} rejects after native without output`,async()=>{const f=fixture(id,channel);mutate(f);await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_PROOF');assert.ok(existsSync(f.env.WSS_TEST_SENTINEL));assert.equal(existsSync(f.config.outputRoot),false);assert.equal(existsSync(f.env.GITHUB_OUTPUT),false);});
