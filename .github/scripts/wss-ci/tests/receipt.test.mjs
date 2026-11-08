@@ -20,7 +20,7 @@ const core=join(base,'core');init(core);cpSync(join(coreSource,'tools'),join(cor
 const manifest=JSON.parse(readFileSync(join(core,'tools/ci/sync-tooling.json')));manifest.origins.integration.commit=P;manifest.origins.integration.ref=`refs/heads/ci/tooling/${P}`;put(core,'tools/ci/sync-tooling.json',JSON.stringify(manifest));const C=commit(core);
 const {expectedLock,sourceBytes}=await import(pathToFileURL(join(core,'tools/ci/sync-tooling.mjs')));
 const {receiptProfiles,renderReceiptWorkflow}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt-workflows.mjs')));
-const {runReceipt,readOnlyGh,receiptRoots}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt.mjs')));
+const {runReceipt,readOnlyGh,receiptRoots,ROOT_KEYS}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt.mjs')));
 const zipCache=new Map();
 function candidateZip(candidate) {
  const text=JSON.stringify(candidate);if(zipCache.has(text))return zipCache.get(text);
@@ -133,6 +133,57 @@ for(const [name,mutate,error] of [
  ['relative root',f=>f.config.sourceRoot='relative',/explicit absolute paths/],
  ['extra role',f=>f.config.extraRoot=f.source,/exactly the declared root roles/]
 ])test(`receipt roots reject ${name}`,()=>{const f=rootFixture();mutate(f);assert.throws(()=>receiptRoots(f.config,f.profile),error);});
+const immutableRootRoles=ROOT_KEYS.filter(role=>role!=='outputRoot');
+function ignoredNestedCheckout(parent,name) {
+ const ignore=join(parent,'.gitignore');
+ put(parent,'.gitignore',(existsSync(ignore)?readFileSync(ignore,'utf8'):'')+`\n/${name}/\n`);
+ commit(parent);
+ const nested=join(parent,name);init(nested);commit(nested);
+ assert.equal(git(parent,'status','--porcelain','--untracked-files=all'),'','The parent must be clean so overlap, not dirt, is rejected');
+ assert.equal(git(nested,'status','--porcelain','--untracked-files=all'),'','The nested checkout must independently be clean');
+ return nested;
+}
+for(const role of immutableRootRoles)for(const name of ['..receipt','...receipt'])test(`receipt roots reject two-dot ${name} output beneath ${role}`,()=>{
+ const f=rootFixture();f.config.outputRoot=join(f.config[role],name);
+ assert.throws(()=>receiptRoots(f.config,f.profile),/Undeclared overlapping receipt root roles/);
+ assert.equal(existsSync(f.config.outputRoot),false);
+});
+for(const name of ['..engine','...engine'])for(const reverse of [false,true])test(`receipt roots reject two-dot ${name} nested checkout with ${reverse?'engine':'source'} ancestor`,()=>{
+ const f=rootFixture();
+ if(reverse){const nested=ignoredNestedCheckout(f.config.engineRoot,name);for(const role of ['sourceRoot','toolsRoot','validatorRoot','integrationRoot'])f.config[role]=nested;}
+ else f.config.engineRoot=ignoredNestedCheckout(f.source,name);
+ assert.throws(()=>receiptRoots(f.config,f.profile),/Undeclared overlapping receipt root roles/);
+ assert.equal(existsSync(f.config.outputRoot),false);
+});
+test('receipt roots admit external output, sibling-prefix roots and declared aliases with two-dot names',()=>{
+ const f=rootFixture(),sibling=join(f.home,'accepted source..engine');init(sibling);commit(sibling);
+ f.config.engineRoot=sibling;f.config.outputRoot=join(f.home,'accepted source...receipt');
+ const roots=receiptRoots(f.config,f.profile);
+ assert.equal(roots.engineRoot,realpathSync.native(sibling));
+ assert.equal(roots.outputRoot,join(realpathSync.native(f.home),'accepted source...receipt'));
+ for(const role of ['toolsRoot','validatorRoot','integrationRoot'])assert.equal(roots[role],roots.sourceRoot);
+ assert.equal(existsSync(roots.outputRoot),false);
+});
+async function rejectsOverlapBeforeExecution(f) {
+ let transportCalls=0;
+ const g=new Proxy({}, {get(){transportCalls++;throw Error('Transport must not be consulted for overlapping roots');}});
+ await assert.rejects(runReceipt(f.config,{g,env:f.env}),error=>error.code==='WSS_RECEIPT_ROOTS'&&/Undeclared overlapping receipt root roles/.test(error.message));
+ assert.equal(transportCalls,0);
+ assert.equal(existsSync(f.env.WSS_TEST_SENTINEL),false);
+ assert.equal(existsSync(f.config.outputRoot),false);
+ assert.equal(existsSync(f.env.GITHUB_OUTPUT),false);
+}
+for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main']) {
+ for(const role of immutableRootRoles)for(const name of ['..receipt','...receipt'])test(`${id}/${channel}: two-dot ${name} output beneath ${role} fails ROOTS before adapter or transport`,async()=>{
+  const f=fixture(id,channel);f.config.outputRoot=join(f.config[role],name);
+  await rejectsOverlapBeforeExecution(f);
+ });
+ test(`${id}/${channel}: two-dot ignored nested engine fails ROOTS before adapter or transport`,async()=>{
+  const f=fixture(id,channel);
+  try{f.config.engineRoot=ignoredNestedCheckout(f.source,'..engine');await rejectsOverlapBeforeExecution(f);}
+  finally{cases.delete(`${id}/${channel}`);}
+ });
+}
 for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main']) {
  test(`${id}/${channel}: generated workflow -> immutable engine -> real pwsh adapter -> receipt`,async()=>{const f=fixture(id,channel),r=await f.run();assert.equal(r.target_id,id);assert.equal(r.channel,channel);assert.equal(r.preflights.length,receiptProfiles[id].preflights);assert.ok(existsSync(f.env.WSS_TEST_SENTINEL));assert.ok(existsSync(join(f.config.outputRoot,'receipt.json')));assert.match(readFileSync(f.env.GITHUB_OUTPUT,'utf8'),/artifact_name=wss-acceptance-/);});
  for(const [name,phase,mutate] of [
