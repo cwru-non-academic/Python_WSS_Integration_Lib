@@ -214,11 +214,13 @@ promotion; it is never relabeled as CLI acceptance. Normal CI also runs the
 
 ### Production path and unchanged cases
 
-The current executable fixture commit and content digest are declared in
-[`.github/python-ci.json`](.github/python-ci.json); CI reads those fields directly.
+Ordinary validation selects fixture identity and case inventories from the
+[profile contract](.github/scripts/PythonProfiles/Contract.ps1) after verifying the
+installed payload profile. Candidate fixture inputs remain declared in
+[`.github/python-ci.json`](.github/python-ci.json).
 The central [verification pin reference](https://github.com/cwru-non-academic/WSS_Documentation/blob/dev/apiDocs/conceptual/verification-pin-reference.md)
 explains fixture and receiver pins as a dated inspection snapshot, rather than a
-list of currently deployed values. The reviewed configuration remains authoritative.
+list of currently deployed values. The reviewed source contracts remain authoritative.
 The canonical fixture is reused directly for the verified payload profile. Only
 its controller factory and type alias change; shared scenarios/values, finite
 waits, evaluators and assertions remain unchanged. The reviewed legacy profile
@@ -269,9 +271,10 @@ Evidence records Python execution, runtime versions, source SHAs,
 producer/artifact/archive tuple, payload digest, profile-specific unchanged
 assertion expressions and XML/log hashes.
 
-Successful committed runs retain `dotnet-conformance-evidence`; candidate runs
-retain `python-preflight-evidence`. The schema is `wss-python-evidence/v1`,
-execution is `pythonnet`, and `python_executed` must be true. The hosted process
+Successful committed runs retain `dotnet-conformance-evidence` with schema
+`wss-python-profile-evidence/v1`; candidate runs retain `python-preflight-evidence`
+with schema `wss-python-evidence/v1`. Both record `execution: pythonnet` and require
+`python_executed: true`. The hosted process
 is .NET embedding Python; this is actual Python execution, not .NET-only evidence.
 Ordinary CI uses public read-only checkouts without App secrets.
 
