@@ -465,9 +465,11 @@ class StimulationController:
 
     @_serialized
     def LoadParamsJson(self, pathOrDir: str | None = None) -> None:
-        """Load stimulation parameters JSON via the .NET layer.
+        """Reload all three JSON files via the .NET layer.
 
-        :param pathOrDir: Optional file/directory path interpreted by the .NET layer.
+        :param pathOrDir: None reloads the startup-default files. A directory loads
+            all three standard files. A file overrides calibration only, using
+            startup-default Core and model files.
         """
         current = self._current_snapshot()
         snapshot = current.ReloadDefaults() if pathOrDir is None else current.Reload(str(pathOrDir))
