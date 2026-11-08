@@ -130,3 +130,18 @@ test('actual immutable Node CLI admits local eligibility without credentials and
   assert.throws(()=>execFileSync(process.execPath,[entry,'--eligibility',f.source,'--skip-authority'],{env,stdio:'pipe'}));
  }
 });
+
+test('all18 generated product checkouts retain historical sources required by native evidence',()=>{
+ for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main']) {
+  const p=receiptProfiles[id],text=renderReceiptWorkflow(id,{core:C,engine:P,validator:p.role==='wrapper'?P:sha(8)}).text;
+  const checkouts=text.split('      - uses: actions/checkout@v4\n').slice(1).map(block=>block.split(/(?=^      - )/m)[0]);
+  for(const role of ['accepted','integration']) {
+   const matches=checkouts.filter(block=>block.includes(`          path: ${role}\n`));
+   assert.equal(matches.length,1,`${id}/${channel}: one explicit ${role} source checkout`);
+   assert.match(matches[0],/^          fetch-depth: 0$/m,`${id}/${channel}: ${role} must retain frozen ancestor objects for native source comparisons`);
+   assert.match(matches[0],/^          persist-credentials: false$/m);
+  }
+  // Tool-only roots need exact pinned blobs; product roots need their ancestors.
+  assert.match(checkouts.find(block=>block.includes('          path: accepted\n')),/ref: \$\{\{ github.sha \}\}/);
+ }
+});
