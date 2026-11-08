@@ -186,8 +186,17 @@ for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main']
   finally{cases.delete(`${id}/${channel}`);}
  });
 }
+function constrainReceiverTransport(f) {
+ const row=JSON.parse(readFileSync(join(here,'receipt-permission-audit.json'))).find(row=>row.target===f.env.TARGET_ID&&row.channel===f.env.WSS_CI_CHANNEL);
+ const allowed=new Set(row.old.repositories.map(name=>'cwru-non-academic/'+name));
+ for(const [method,fn]of Object.entries(f.g))f.g[method]=(...args)=>{
+  const repository=['get','pages'].includes(method)?String(args[0]).match(/^repos\/([^/]+\/[^/]+)\//)?.[1]:args[0];
+  assert.ok(allowed.has(repository),'Unexpected repository read outside existing family scope: '+repository+' via '+method);
+  return fn(...args);
+ };
+}
 for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main']) {
- test(`${id}/${channel}: generated workflow -> immutable engine -> real pwsh adapter -> receipt`,async()=>{const f=fixture(id,channel),r=await f.run();assert.equal(r.target_id,id);assert.equal(r.channel,channel);assert.equal(r.preflights.length,receiptProfiles[id].preflights);assert.ok(existsSync(f.env.WSS_TEST_SENTINEL));assert.ok(existsSync(join(f.config.outputRoot,'receipt.json')));assert.match(readFileSync(f.env.GITHUB_OUTPUT,'utf8'),/artifact_name=wss-acceptance-/);});
+ test(`${id}/${channel}: generated workflow -> immutable engine -> real pwsh adapter -> receipt`,async()=>{const f=fixture(id,channel);constrainReceiverTransport(f);const r=await f.run();assert.equal(r.target_id,id);assert.equal(r.channel,channel);assert.equal(r.preflights.length,receiptProfiles[id].preflights);assert.ok(existsSync(f.env.WSS_TEST_SENTINEL));assert.ok(existsSync(join(f.config.outputRoot,'receipt.json')));assert.match(readFileSync(f.env.GITHUB_OUTPUT,'utf8'),/artifact_name=wss-acceptance-/);});
  for(const [name,phase,mutate] of [
  ['wrong repository','ELIGIBILITY',f=>f.env.GITHUB_REPOSITORY=CORE],['wrong channel','ELIGIBILITY',f=>f.env.WSS_CI_CHANNEL='other'],['wrong event','ELIGIBILITY',f=>f.env.GITHUB_EVENT_NAME='pull_request'],['wrong workflow source','ELIGIBILITY',f=>f.env.GITHUB_WORKFLOW_SHA=sha(9)],
  ['unknown root','ROOTS',f=>f.config.contractRoot=core],['aliased engine','ROOTS',f=>f.config.engineRoot=f.source],['dirty root','ROOTS',f=>put(f.source,'untracked.txt','x')],['wrong engine pin','PINS',f=>f.env.WSS_RECEIPT_ENGINE_SHA=sha(9)],['wrong core pin','PINS',f=>f.env.WSS_RECEIPT_CORE_SHA=sha(9)],
@@ -325,4 +334,104 @@ for(const channel of ['dev','main'])test(`python-cli/${channel}: final admission
  f.g.run=(repo,id)=>{const result=run(repo,id);return moved&&String(id)==='20'?{...result,run_attempt:2}:result;};
  f.g.download=(repo,id,name,files)=>{const result=download(repo,id,name,files);if(String(id)==='20'&&name===selectedTestArtifactName('python-cli',1))moved=true;return result;};
  try{await assert.rejects(f.run(),error=>error.code==='WSS_RECEIPT_RECHECK');assert.equal(moved,true);noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
+});
+// Complete admission refresh retains immutable proofs, but must resample every
+// existing live metadata predicate after the last independent byte acquisition.
+function afterLastProofBytes(f,mutate) {
+ let reads=0,fired=false;
+ const artifactBytes=f.g.artifactBytes;
+ f.g.artifactBytes=(repo,id)=>{
+  const bytes=artifactBytes(repo,id);
+  if(Number(id)<2000&&++reads===f.proofs.length*2){fired=true;mutate();}
+  return bytes;
+ };
+ return ()=>assert.equal(fired,true,'Mutation must follow the final native artifact byte read');
+}
+function alterLiveRun(f,id,change) {const run=f.g.run;f.g.run=(repo,value)=>{const r=run(repo,value);return String(value)===id?change(structuredClone(r)):r;};}
+function alterNativeMetadata(f,change,{listChange}={}) {
+ const get=f.g.get,pages=f.g.pages;
+ f.g.get=path=>{const value=get(path);return path.endsWith('/actions/artifacts/1000')?change(structuredClone(value)):value;};
+ f.g.pages=(path,key)=>{const value=pages(path,key);if(!path.includes('/runs/30/artifacts'))return value;const changed=value.map(a=>String(a.id)==='1000'?change(structuredClone(a)):a);return listChange?listChange(changed):changed;};
+}
+const completeLiveMutations=[
+ ['producer attempt',f=>alterLiveRun(f,'1',r=>({...r,run_attempt:2}))],
+ ['producer status',f=>alterLiveRun(f,'1',r=>({...r,status:'in_progress',conclusion:null}))],
+ ['producer jobs',f=>{const jobs=f.g.jobs;f.g.jobs=(repo,r)=>String(r.id)==='1'?[]:jobs(repo,r);}],
+ ['producer artifact expiry',f=>{f.artifact.expired=true;}],
+ ['producer artifact replacement',f=>{f.artifact.id=777;}],
+ ['producer artifact absence',f=>{const artifact=f.g.artifact;f.g.artifact=(repo,id,name)=>name==='universal-release-assets'?(()=>{throw Error('Missing producer artifact');})():artifact(repo,id,name);}],
+ ['emitter attempt',f=>alterLiveRun(f,'99',r=>({...r,run_attempt:2}))],
+ ['emitter source',f=>alterLiveRun(f,'99',r=>({...r,head_sha:sha(9)}))],
+ ['emitter workflow',f=>alterLiveRun(f,'99',r=>({...r,path:'.github/workflows/untrusted.yml'}))],
+ ['preflight attempt',f=>alterLiveRun(f,'30',r=>({...r,run_attempt:2}))],
+ ['preflight status',f=>alterLiveRun(f,'30',r=>({...r,status:'in_progress',conclusion:null}))],
+ ['preflight canonical jobs',f=>{const jobs=f.g.jobs;f.g.jobs=(repo,r)=>String(r.id)==='30'?[...jobs(repo,r),{id:901,name:'Later native job',status:'completed',conclusion:'success'}]:jobs(repo,r);}],
+ ['native artifact expiry',f=>alterNativeMetadata(f,a=>({...a,expired:true}))],
+ ['native artifact deletion',f=>alterNativeMetadata(f,a=>a,{listChange:xs=>xs.filter(a=>String(a.id)!=='1000')})],
+ ['native artifact duplicate',f=>alterNativeMetadata(f,a=>a,{listChange:xs=>[...xs,{...xs.find(a=>String(a.id)==='1000'),id:7777}]})],
+ ['native artifact replacement',f=>alterNativeMetadata(f,a=>({...a,id:7777}))],
+ ['native artifact digest',f=>alterNativeMetadata(f,a=>({...a,digest:'sha256:'+'f'.repeat(64)}))]
+];
+for(const channel of ['dev','main'])for(const selected of [false,true])for(const [name,mutate] of completeLiveMutations)test(`python-cli/${channel}: complete admission ${selected?'selected':'legacy'} rejects ${name} after last bytes`,async()=>{
+ const f=selected?selectedFixture(channel):fixture('python-cli',channel),fired=afterLastProofBytes(f,()=>mutate(f));
+ try{await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_RECHECK');fired();noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])for(const runId of ['20','30'])for(const change of ['expiry','replacement','absence'])test(`python-cli/${channel}: complete admission rejects ${runId==='20'?'normal':'preflight'} selected artifact ${change}`,async()=>{
+ const f=selectedFixture(channel),fired=afterLastProofBytes(f,()=>{const artifact=f.g.artifact;f.g.artifact=(repo,id,name)=>{if(String(id)!==runId||!name.startsWith('wss-selected-tests-'))return artifact(repo,id,name);if(change==='absence')throw Error('Missing selected artifact');const a=artifact(repo,id,name);return change==='expiry'?{...a,expired:true}:{...a,id:77777};};});
+ try{await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_RECHECK');fired();noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])for(const selected of [false,true])test(`python-cli/${channel}: complete admission ${selected?'selected':'legacy'} permits running emitter and immutable history without more bytes`,async()=>{
+ const f=selected?selectedFixture(channel):fixture('python-cli',channel);let complete=false,extraBytes=0;
+ const download=f.g.download,bytes=f.g.artifactBytes;
+ f.g.download=(...args)=>{if(complete)extraBytes++;return download(...args);};
+ f.g.artifactBytes=(...args)=>{if(complete)extraBytes++;return bytes(...args);};
+ const fired=afterLastProofBytes(f,()=>{
+  complete=true;
+  alterLiveRun(f,'99',r=>({...r,status:'in_progress',conclusion:null}));
+  const jobs=f.g.jobs;f.g.jobs=(repo,r)=>String(r.id)==='1'||String(r.id)==='20'?[...jobs(repo,r),{id:909,name:'Unrelated diagnostic',status:'queued',conclusion:null}]:jobs(repo,r);
+  const pages=f.g.pages;f.g.pages=(path,key)=>{const result=pages(path,key);return path.includes('/artifacts')?[...result,{id:98765,name:'unrelated-output',expired:false}]:path.includes('/runs?')?[...result,{event:'pull_request'}]:result;};
+  // Standalone candidate provenance and past merge facts are authenticated
+  // history, not new ongoing retention or PR-body revocation policies.
+  const get=f.g.get;f.g.get=path=>path.includes('/actions/artifacts/2')?{...get(path),expired:true}:path.includes('/pulls/')?{...get(path),title:'Unrelated title change',body:'Unrelated text'}:get(path);
+ });
+ try{const r=await f.run();fired();assert.equal(r.normal_ci.attempt,1);assert.equal(extraBytes,0);assert.ok(existsSync(join(f.config.outputRoot,'receipt.json')));if(selected)assert.deepEqual(r.selected_tests,targetTestEvidence(f.plan,'python-cli'));}finally{cases.delete(`python-cli/${channel}`);}
+});
+
+for(const channel of ['dev','main'])for(const selected of [false,true])for(const point of ['producer artifact','native artifact','own emitter'])test(`python-cli/${channel}: complete boundary ${selected?'selected':'legacy'} brackets ${point} metadata`,async()=>{
+ const f=selected?selectedFixture(channel):fixture('python-cli',channel);let armed=false,moved=false;
+ const fired=afterLastProofBytes(f,()=>{armed=true;});
+ const move=()=>{if(armed&&!moved){moved=true;alterLiveRun(f,point==='producer artifact'?'1':'30',r=>({...r,run_attempt:2}));}};
+ if(point==='producer artifact'){const artifact=f.g.artifact;f.g.artifact=(repo,id,name)=>{const a=artifact(repo,id,name);if(name==='universal-release-assets')move();return a;};}
+ if(point==='native artifact'){const get=f.g.get;f.g.get=path=>{const value=get(path);if(path.endsWith('/actions/artifacts/1000'))move();return value;};}
+ if(point==='own emitter'){const run=f.g.run;f.g.run=(repo,id)=>{const value=run(repo,id);if(String(id)==='99')move();return value;};}
+ try{await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_RECHECK');fired();assert.equal(moved,true);noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])for(const kind of ['producer','emitter'])test(`python-cli/${channel}: complete boundary rejects aliased ${kind} capture mutation`,async()=>{
+ const f=fixture('python-cli',channel),run=f.g.run,id=kind==='producer'?'1':'99',aliased=run(kind==='producer'?CORE:f.env.GITHUB_REPOSITORY,id);
+ f.g.run=(repo,value)=>String(value)===id?aliased:run(repo,value);
+ const fired=afterLastProofBytes(f,()=>{aliased.run_attempt=2;});
+ try{await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_RECHECK');fired();noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])test(`python-cli/${channel}: complete boundary brackets selected artifact metadata`,async()=>{
+ const f=selectedFixture(channel);let armed=false,moved=false;const fired=afterLastProofBytes(f,()=>{armed=true;});
+ const artifact=f.g.artifact;f.g.artifact=(repo,id,name)=>{const result=artifact(repo,id,name);if(armed&&String(id)==='20'&&name.startsWith('wss-selected-tests-')){moved=true;f.normal.run_attempt=2;}return result;};
+ try{await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_RECHECK');fired();assert.equal(moved,true);noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])test(`python-cli/${channel}: complete boundary retains authenticated logs without ongoing retrievability`,async()=>{
+ const f=fixture('python-cli',channel),bytes=Buffer.from('captured historical native log');let reads=0;
+ for(const d of f.proofs)d.logs=[{job_id:'900',sha256:bytesDigest(bytes)}];
+ f.g.jobLogBytes=()=>{reads++;if(reads>f.proofs.length*2)throw Error('Already captured log no longer downloadable');return bytes;};
+ try{const r=await f.run();assert.equal(reads,f.proofs.length*2);assert.ok(r.preflights.every(d=>d.logs[0].sha256===bytesDigest(bytes)));}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])test(`python-cli/${channel}: complete boundary keeps frozen selected source despite later variables and test tip`,async()=>{
+ const f=selectedFixture(channel),get=f.g.get,head=f.g.head;let variableReads=0,testTipReads=0;
+ f.g.get=path=>{if(path.includes('/variables')){variableReads++;throw Error('Current selection variables must not be resolved');}return get(path);};
+ f.g.head=(repo,branch)=>{if(repo==='cwru-non-academic/TestBundle'){testTipReads++;return sha(9);}return head(repo,branch);};
+ try{const r=await f.run();assert.equal(variableReads,0);assert.equal(testTipReads,0);assert.equal(r.selected_tests.test_commit,sha(7));}finally{cases.delete(`python-cli/${channel}`);}
+});
+for(const channel of ['dev','main'])for(const selected of [false,true])test(`python-cli/${channel}: complete boundary ${selected?'selected':'legacy'} refresh follows workflow metadata`,async()=>{
+ const f=selected?selectedFixture(channel):fixture('python-cli',channel);let armed=false,moved=false;
+ const fired=afterLastProofBytes(f,()=>{armed=true;}),object=f.g.object;
+ f.g.object=(repo,ref,path)=>{const value=object(repo,ref,path);if(armed&&path==='.github/workflows'&&!moved){moved=true;alterNativeMetadata(f,a=>({...a,expired:true}));}return value;};
+ try{await assert.rejects(f.run(),e=>e.code==='WSS_RECEIPT_RECHECK');fired();assert.equal(moved,true);noReceipt(f);}finally{cases.delete(`python-cli/${channel}`);}
 });
