@@ -1,7 +1,7 @@
 import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,cpSync,existsSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,cpSync,existsSync,realpathSync} from 'node:fs';
 import {join,resolve,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -20,7 +20,7 @@ const core=join(base,'core');init(core);cpSync(join(coreSource,'tools'),join(cor
 const manifest=JSON.parse(readFileSync(join(core,'tools/ci/sync-tooling.json')));manifest.origins.integration.commit=P;manifest.origins.integration.ref=`refs/heads/ci/tooling/${P}`;put(core,'tools/ci/sync-tooling.json',JSON.stringify(manifest));const C=commit(core);
 const {expectedLock,sourceBytes}=await import(pathToFileURL(join(core,'tools/ci/sync-tooling.mjs')));
 const {receiptProfiles,renderReceiptWorkflow}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt-workflows.mjs')));
-const {runReceipt,readOnlyGh}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt.mjs')));
+const {runReceipt,readOnlyGh,receiptRoots}=await import(pathToFileURL(join(owner,'.github/scripts/wss-ci/receipt.mjs')));
 const zipCache=new Map();
 function candidateZip(candidate) {
  const text=JSON.stringify(candidate);if(zipCache.has(text))return zipCache.get(text);
@@ -88,6 +88,51 @@ function fixture(id,channel){
  };
  cases.set(key,f);return f;
 }
+// Exercise physical checkout identity independently of the receipt network/adapter
+// fixture. Windows must exercise a real filesystem 8.3 alias, not a mocked path.
+function rootFixture() {
+ const home=mkdtempSync(join(base,'receipt root identity '));
+ const source=join(home,'accepted source'),engine=join(home,'engine source'),core=join(home,'core source');
+ for(const root of [source,engine,core]){init(root);commit(root);}
+ const profile=Object.values(receiptProfiles).find(p=>p.family==='python'&&p.role==='wrapper');
+ return {home,source,profile,config:{sourceRoot:source,toolsRoot:source,validatorRoot:source,integrationRoot:source,engineRoot:engine,coreRoot:core,outputRoot:join(home,'fresh output')}};
+}
+function shortPath(path) {
+ return execFileSync('pwsh',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; (New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:WSS_TEST_LONG_PATH).ShortPath"],{encoding:'utf8',env:{...process.env,WSS_TEST_LONG_PATH:path}}).trim();
+}
+test('receipt roots preserve exact physical checkout identities',()=>{
+ const f=rootFixture(),roots=receiptRoots(f.config,f.profile);
+ for(const [role,path] of Object.entries(f.config))assert.equal(roots[role],role==='outputRoot'?join(realpathSync.native(f.home),'fresh output'):realpathSync.native(path));
+ assert.equal(existsSync(roots.outputRoot),false);
+});
+test('receipt roots canonicalize real Windows 8.3 and long checkout aliases',{skip:process.platform!=='win32'},()=>{
+ const f=rootFixture(),short=Object.fromEntries(['sourceRoot','engineRoot','coreRoot'].map(role=>[role,shortPath(f.config[role])]));
+ for(const [role,path] of Object.entries(short)){
+  assert.notEqual(path.toLowerCase(),f.config[role].toLowerCase(),'Regression requires an actual distinct Windows 8.3 path');
+  assert.equal(realpathSync.native(path),realpathSync.native(f.config[role]));
+  assert.equal(realpathSync.native(git(path,'rev-parse','--show-toplevel')),realpathSync.native(path));
+ }
+ const expected=receiptRoots(f.config,f.profile);
+ const mixed={...f.config,...short,toolsRoot:short.sourceRoot,integrationRoot:short.sourceRoot,outputRoot:join(shortPath(f.home),'fresh output')};
+ assert.deepEqual(receiptRoots(mixed,f.profile),expected);
+ assert.deepEqual(receiptRoots({...mixed,sourceRoot:f.source,validatorRoot:short.sourceRoot},f.profile),expected);
+ assert.throws(()=>receiptRoots({...mixed,engineRoot:short.sourceRoot},f.profile),/Undeclared overlapping receipt root roles/);
+ mkdirSync(join(f.source,'not-checkout-root'));
+ assert.throws(()=>receiptRoots({...mixed,sourceRoot:join(short.sourceRoot,'not-checkout-root')},f.profile),/checkout root/);
+ assert.equal(existsSync(expected.outputRoot),false);
+});
+for(const [name,mutate,error] of [
+ ['subdirectory',f=>{const sub=join(f.source,'subdirectory');mkdirSync(sub);f.config.sourceRoot=sub;},/checkout root/],
+ ['undeclared alias',f=>f.config.engineRoot=f.source,/Undeclared overlapping receipt root roles/],
+ ['split wrapper roles',f=>f.config.toolsRoot=f.config.engineRoot,/Wrapper native roles must alias/],
+ ['nested checkout',f=>{const nested=join(f.source,'nested');init(nested);commit(nested);f.config.engineRoot=nested;},/Undeclared overlapping receipt root roles/],
+ ['tracked dirt',f=>put(f.source,'.gitattributes','* text=auto eol=crlf\n'),/checkouts must be clean/],
+ ['untracked dirt',f=>put(f.source,'unexpected.txt','dirty'),/checkouts must be clean/],
+ ['existing output',f=>mkdirSync(f.config.outputRoot),/output root must be new/],
+ ['output inside checkout',f=>f.config.outputRoot=join(f.source,'receipt'),/Undeclared overlapping receipt root roles/],
+ ['relative root',f=>f.config.sourceRoot='relative',/explicit absolute paths/],
+ ['extra role',f=>f.config.extraRoot=f.source,/exactly the declared root roles/]
+])test(`receipt roots reject ${name}`,()=>{const f=rootFixture();mutate(f);assert.throws(()=>receiptRoots(f.config,f.profile),error);});
 for(const id of Object.keys(receiptProfiles))for(const channel of ['dev','main']) {
  test(`${id}/${channel}: generated workflow -> immutable engine -> real pwsh adapter -> receipt`,async()=>{const f=fixture(id,channel),r=await f.run();assert.equal(r.target_id,id);assert.equal(r.channel,channel);assert.equal(r.preflights.length,receiptProfiles[id].preflights);assert.ok(existsSync(f.env.WSS_TEST_SENTINEL));assert.ok(existsSync(join(f.config.outputRoot,'receipt.json')));assert.match(readFileSync(f.env.GITHUB_OUTPUT,'utf8'),/artifact_name=wss-acceptance-/);});
  for(const [name,phase,mutate] of [
