@@ -25,8 +25,9 @@ if($Mode -ceq 'committed') {
         $config=$toolBinding.config
     }else{$config=Read-PythonProfileProductConfig (Join-Path $WrapperRoot '.github/python-ci.json')}
 } else {
-    if($ToolsRoot -or $ToolsSha -or $ConfigPath){throw 'Candidate platform validation does not accept ordinary tooling overrides.'}
-    $config=Read-PythonConfig (Join-Path $WrapperRoot '.github/python-ci.json')
+    . "$PSScriptRoot/PythonProfiles/Tooling.ps1"
+    $toolBinding=Resolve-PythonCandidateTooling -ToolsRoot $ToolsRoot -ToolsSha $ToolsSha -ConfigPath $ConfigPath -WrapperRoot $WrapperRoot -WrapperSha $WrapperSha
+    $config=$toolBinding.config
     $tests=Resolve-PythonTestSource $WrapperRoot $WrapperSha (Join-Path $WrapperRoot '.github/python-ci.json') $TestRoot $TestSha $TestRepository $TestSelectionId
 }
 Assert-PythonSource $WrapperRoot $WrapperSha
@@ -79,6 +80,65 @@ if ($LASTEXITCODE -ne 0) { throw 'Wheel installation failed.' }
 $stagedPayload = Join-Path $installed 'Cs_Libraries'
 Copy-Item -LiteralPath $payload -Destination $stagedPayload -Recurse
 Assert-PythonProjection $stagedPayload $projection
+# Restore and build the authenticated fixture before any selected test code runs.
+$env:WSS_ARTIFACT_DIR = $stagedPayload
+$env:WSS_BLE_ARTIFACT_DIR = $stagedPayload
+$project = Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
+$buildRoot = Join-Path $OutputRoot 'shared-build'
+$projectAssetsFile = Join-Path $buildRoot 'obj/Wss.CSharpImplementation.Tests/project.assets.json'
+@{sdk=@{version=$config.dotnet_sdk;rollForward='disable'}} | ConvertTo-Json | Set-Content (Join-Path $OutputRoot 'global.json')
+. "$PSScriptRoot/wss-ci/restored-assets/RestoredAssets.ps1"
+. "$PSScriptRoot/SelectedParentSnapshot.ps1"
+Push-Location $OutputRoot
+try {
+    & dotnet restore $project --artifacts-path $buildRoot -p:Configuration=Release -p:TreatWarningsAsErrors=true -p:DisablePackageAssetsCache=true -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
+    if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform restore failed.' }
+    $restoreProof = New-WssRestoredAssetsProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+    & dotnet build $project -c Release --artifacts-path $buildRoot --no-restore -p:TreatWarningsAsErrors=true -p:DisablePackageAssetsCache=true -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
+    if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform build failed.' }
+} finally { Pop-Location }
+$testOutputs = @(Get-ChildItem -LiteralPath (Join-Path $buildRoot 'bin/Wss.CSharpImplementation.Tests') -Filter 'Wss.CSharpImplementation.Tests.dll' -Recurse -File)
+if ($testOutputs.Count -ne 1) { throw 'Expected one isolated shared platform build output.' }
+$builtPayload = $testOutputs[0].Directory.FullName
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
+if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
+Assert-PythonProjection $stagedPayload $projection
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project -RestoreProof $restoreProof
+if (!$?) { throw 'Platform build payload propagation failed.' }
+# Complete the immutable fixture baseline before any selected smoke runs.
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
+if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
+Assert-PythonProjection $stagedPayload $projection
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project -RestoreProof $restoreProof
+if (!$?) { throw 'Platform build payload propagation failed.' }
+Push-Location $OutputRoot
+try {
+    & dotnet test $project -c Release --artifacts-path $buildRoot --no-restore --no-build --filter 'FullyQualifiedName~SerialRuntimeSelectionTests|FullyQualifiedName~BleBackendLoadingTests' --logger 'trx;LogFileName=platform.trx' --results-directory $OutputRoot -p:TreatWarningsAsErrors=true -p:DisablePackageAssetsCache=true -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
+    if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform compatibility tests failed.' }
+} finally { Pop-Location }
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
+if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
+Assert-PythonProjection $stagedPayload $projection
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+& (Join-Path $PSScriptRoot 'wss-ci/restored-assets/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload -ProjectAssetsFile $projectAssetsFile -ProjectPath $project -RestoreProof $restoreProof
+if (!$?) { throw 'Platform build payload propagation failed.' }
+foreach ($relative in @(Get-PythonProjectionFiles $projection)) {
+    if ($relative -ceq 'System.IO.Ports.dll') { continue } # Verified NuGet runtime selection above.
+    if ((Get-FileHash (Join-Path $stagedPayload $relative)).Hash -cne (Get-FileHash (Join-Path $builtPayload $relative)).Hash) {
+        throw "Shared platform build dropped or changed a declared asset: $relative"
+    }
+}
+if ($IsMacOS -and $contract -ceq 'macos-ble-v1') {
+    [xml]$trx = Get-Content (Join-Path $OutputRoot 'platform.trx') -Raw
+    if (@($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName -ceq 'FacadeLoadsCurrentPlatformBackendAndDependencies' -and $_.outcome -ceq 'Passed' }).Count -ne 1) {
+        throw 'The pinned shared C# fixture must execute macOS BLE; a skipped legacy fixture is not acceptance.'
+    }
+}
+$baselineTrxSha256 = (Get-FileHash (Join-Path $OutputRoot 'platform.trx')).Hash.ToLowerInvariant()
+$platformSnapshot = New-SelectedParentSnapshot @($buildRoot,$installed,(Join-Path $PSScriptRoot 'wss-ci/restored-assets')) @((Join-Path $OutputRoot 'global.json'),(Join-Path $OutputRoot 'platform.trx'))
+# Selected smoke is additional evidence and runs only after the native baseline.
 $env:PYTHONNET_RUNTIME = 'coreclr'
 $env:PYTHONPATH = $installed
 $env:PYTHONDONTWRITEBYTECODE = '1'
@@ -90,37 +150,16 @@ try {
     & $PythonExe (Join-Path $tests.root 'conformance/platform_smoke.py') @options
     if ($LASTEXITCODE -ne 0) { throw 'Installed Python platform smoke failed.' }
 } finally { Pop-Location }
-# Run the identical C# platform tests against the payload consumed by Python.
-# These test real backend/dependency/native loading, not emulator semantics.
-$env:WSS_ARTIFACT_DIR = $stagedPayload
-$env:WSS_BLE_ARTIFACT_DIR = $stagedPayload
-$project = Join-Path $FixtureRoot 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
-$buildRoot = Join-Path $OutputRoot 'shared-build'
-@{sdk=@{version=$config.dotnet_sdk;rollForward='disable'}} | ConvertTo-Json | Set-Content (Join-Path $OutputRoot 'global.json')
-Push-Location $OutputRoot
-try {
-    & dotnet test $project -c Release --artifacts-path $buildRoot --filter 'FullyQualifiedName~SerialRuntimeSelectionTests|FullyQualifiedName~BleBackendLoadingTests' --logger 'trx;LogFileName=platform.trx' --results-directory $OutputRoot -p:TreatWarningsAsErrors=true
-    if ($LASTEXITCODE -ne 0) { throw 'Shared C# platform compatibility tests failed.' }
-} finally { Pop-Location }
-$testOutputs = @(Get-ChildItem -LiteralPath (Join-Path $buildRoot 'bin/Wss.CSharpImplementation.Tests') -Filter 'Wss.CSharpImplementation.Tests.dll' -Recurse -File)
-if ($testOutputs.Count -ne 1) { throw 'Expected one isolated shared platform build output.' }
-$builtPayload = $testOutputs[0].Directory.FullName
-& (Join-Path $FixtureRoot '.github/scripts/Verify-WssOutput.ps1') -ArtifactRoot $stagedPayload -OutputRoot $builtPayload
-if (!$?) { throw 'Platform build payload propagation failed.' }
-foreach ($relative in @(Get-PythonProjectionFiles $projection)) {
-    if ($relative -ceq 'System.IO.Ports.dll') { continue } # Verified NuGet runtime selection above.
-    if ((Get-FileHash (Join-Path $stagedPayload $relative)).Hash -cne (Get-FileHash (Join-Path $builtPayload $relative)).Hash) {
-        throw "Shared platform build dropped or changed a declared asset: $relative"
-    }
-}
-$smoke = Get-Content $smokeResult -Raw | ConvertFrom-Json
+Assert-SelectedParentSnapshot $platformSnapshot
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $projectAssetsFile -ProjectPath $project
+$smokeBytes = [IO.File]::ReadAllBytes($smokeResult)
+$smoke = [Text.Encoding]::UTF8.GetString($smokeBytes) | ConvertFrom-Json
+$smokeSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($smokeBytes)).ToLowerInvariant()
 if ($IsMacOS -and $contract -ceq 'macos-ble-v1') {
     if (!$smoke.macos_ble_declared -or !$smoke.ble.StartsWith('passed:',[StringComparison]::Ordinal)) { throw 'Declared macOS BLE activation must pass.' }
-    [xml]$trx = Get-Content (Join-Path $OutputRoot 'platform.trx') -Raw
-    if (@($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName -ceq 'FacadeLoadsCurrentPlatformBackendAndDependencies' -and $_.outcome -ceq 'Passed' }).Count -ne 1) {
-        throw 'The pinned shared C# fixture must execute macOS BLE; a skipped legacy fixture is not acceptance.'
-    }
 }
+# Recheck immutable sources and emit captured baseline evidence.
+Assert-PythonSource $FixtureRoot $tests.contract.fixture_commit
 if($toolBinding){Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath}
 Assert-PythonProjection $stagedPayload $projection
 Assert-PythonProjection $payload $projection
@@ -129,4 +168,4 @@ if($Mode -ceq 'committed' -and $CliRoot){Assert-PythonOrdinaryCliPair $CliRoot $
 if ($CliRoot) { Assert-PythonSource $CliRoot $CliSha -IgnoreSubmodule }
 if($Mode -ceq 'committed'){Assert-PythonProfileTestSource $tests}else{Assert-PythonTestSource $tests}
 if ($IsMacOS -and $contract -ceq 'legacy-v1') { Write-Output 'UNSUPPORTED: exact legacy payload does not declare macOS BLE; no BLE support is claimed.' }
-@{tooling_root=$(if($toolBinding){$toolBinding.tooling_root}else{''});tooling_sha=$(if($toolBinding){$toolBinding.tooling_sha}else{''});tooling_config_sha256=$(if($toolBinding){$toolBinding.tooling_config_sha256}else{''});schema='wss-python-platform/v2'; mode=$Mode; candidate=$projection.candidate; wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$tests.contract.fixture_commit; test_root=$tests.root; test_sha=$tests.sha; test_repository=$tests.repository; test_selection_id=$tests.selection_id; test_contract_sha256=$tests.contract_sha256; os=[Runtime.InteropServices.RuntimeInformation]::OSDescription; projection_sha256=$projection.projection_sha256; universal_contract=$contract; architecture=$smoke.architecture; execution=$smoke.execution; platform_trx_sha256=(Get-FileHash (Join-Path $OutputRoot 'platform.trx')).Hash.ToLowerInvariant(); installed_python_smoke='passed'; ble=$smoke.ble; python_smoke_sha256=(Get-FileHash $smokeResult).Hash.ToLowerInvariant(); run_repository=$env:GITHUB_REPOSITORY; run_id=$env:GITHUB_RUN_ID; run_sha=$env:GITHUB_SHA} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $OutputRoot 'platform.json')
+@{tooling_root=$(if($toolBinding){$toolBinding.tooling_root}else{''});tooling_sha=$(if($toolBinding){$toolBinding.tooling_sha}else{''});tooling_config_sha256=$(if($toolBinding){$toolBinding.tooling_config_sha256}else{''});schema='wss-python-platform/v2'; mode=$Mode; candidate=$projection.candidate; wrapper_sha=$WrapperSha; cli_sha=$CliSha; fixture_sha=$tests.contract.fixture_commit; test_root=$tests.root; test_sha=$tests.sha; test_repository=$tests.repository; test_selection_id=$tests.selection_id; test_contract_sha256=$tests.contract_sha256; os=[Runtime.InteropServices.RuntimeInformation]::OSDescription; projection_sha256=$projection.projection_sha256; universal_contract=$contract; architecture=$smoke.architecture; execution=$smoke.execution; platform_trx_sha256=$baselineTrxSha256; installed_python_smoke='passed'; ble=$smoke.ble; python_smoke_sha256=$smokeSha256; run_repository=$env:GITHUB_REPOSITORY; run_id=$env:GITHUB_RUN_ID; run_sha=$env:GITHUB_SHA} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $OutputRoot 'platform.json')

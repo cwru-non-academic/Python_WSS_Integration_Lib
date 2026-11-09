@@ -21,6 +21,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Verify legacy candidate readiness and exact rejection reasons
+        shell: pwsh
+        run: ./.github/scripts/tests/Test-CandidateReadiness.ps1
+      - name: Verify shared restored-assets caller contract
+        shell: pwsh
+        run: ./.github/scripts/tests/Test-PythonRestoredAssetsCaller.ps1
       - name: Verify source and credential boundaries
         shell: pwsh
         run: |
@@ -30,3 +36,11 @@ jobs:
       - name: Reject actual child mutations of parent authority and baseline
         shell: pwsh
         run: ./.github/scripts/tests/Test-SelectedParentSnapshot.ps1
+      - name: Verify shared restored-assets and output hash contracts
+        shell: pwsh
+        run: ./.github/scripts/wss-ci/restored-assets/RestoredAssets.Tests.ps1
+      - name: Install pinned workflow parser
+        run: python -m pip install PyYAML==6.0.3
+      - name: Verify explicit reusable tooling admission and routing
+        shell: pwsh
+        run: ./.github/scripts/tests/Test-PythonReusableTooling.ps1
