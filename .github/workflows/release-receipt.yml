@@ -1,3 +1,4 @@
+# Generated from the immutable integration-owned common receipt template.
 name: Verify release acceptance
 run-name: WSS acceptance python-wrapper ${{ inputs.plan_id }}
 on:
@@ -5,10 +6,6 @@ on:
     inputs:
       producer_run_id: {required: true, type: string}
       plan_id: {required: true, type: string}
-env:
-  WSS_CI_CHANNEL: ${{ github.ref_name }}
-  WSS_TARGET_ROOT: ${{ github.workspace }}/source
-  WSS_CORE_TOOLS_ROOT: ${{ github.workspace }}/contract
 permissions:
   contents: read
   actions: read
@@ -19,27 +16,64 @@ concurrency:
 jobs:
   receipt:
     name: Verify exact reviewed acceptance
+    if: github.repository == 'cwru-non-academic/Python_WSS_Integration_Lib' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 30
+    env:
+      WSS_CI_CHANNEL: ${{ github.ref_name }}
+      TARGET_ID: python-wrapper
+      PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+      PLAN_ID: ${{ inputs.plan_id }}
+      WSS_RECEIPT_ENGINE_SHA: 9fd69c272e5a240ad93ceaa8bdf9d5ea02276bca
+      WSS_RECEIPT_CORE_SHA: 88082139d96f2c7c26021ce3fda777c0b3df8748
+      WSS_RECEIPT_VALIDATOR_SHA: 9fd69c272e5a240ad93ceaa8bdf9d5ea02276bca
     steps:
-      - name: Require target reconciliation before credentials
+      - name: Require static caller eligibility before credentials
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch') { throw 'Only read-only target branch reconciliation is supported.' }
+          if ($env:GITHUB_REPOSITORY -cne 'cwru-non-academic/Python_WSS_Integration_Lib' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:PRODUCER_RUN_ID -cnotmatch '^[1-9][0-9]*$' -or $env:PLAN_ID -cnotmatch '^[a-f0-9]{64}$') { throw 'Ineligible receipt caller.' }
+          if ($env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA -or $env:GITHUB_WORKFLOW_REF -cne "$env:GITHUB_REPOSITORY/.github/workflows/release-receipt.yml@$env:GITHUB_REF") { throw 'Receipt workflow source differs from accepted source.' }
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
-          path: source
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: 9fd69c272e5a240ad93ceaa8bdf9d5ea02276bca
+          path: bootstrap/Python_WSS_Integration_Lib
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: aea724dd0bc7e6375a873d716447167f4248b8e0
-          path: contract
+          ref: 88082139d96f2c7c26021ce3fda777c0b3df8748
+          path: core
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: accepted
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: ${{ false }}
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ github.sha }}
+          path: validator
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: ${{ false }}
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ github.ref_name }}
+          path: integration
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Check local eligibility and native readiness before read credentials
+        shell: pwsh
+        run: |
+          & node (Join-Path $env:GITHUB_WORKSPACE 'bootstrap/Python_WSS_Integration_Lib/.github/scripts/wss-ci/receipt.mjs') --eligibility (Join-Path $env:GITHUB_WORKSPACE 'accepted')
+          if($LASTEXITCODE -ne 0){throw 'Common local receipt eligibility failed.'}
       - uses: actions/create-github-app-token@v2
         id: read
         with:
@@ -50,19 +84,29 @@ jobs:
           permission-contents: read
           permission-actions: read
           permission-pull-requests: read
-      - name: Verify frozen plan, original rich proofs, actual merge and postmerge CI
+      - name: Admit authority, invoke native proof, recheck and emit
+        id: receipt
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.read.outputs.token }}
-          TARGET_ID: python-wrapper
-          PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
-          PLAN_ID: ${{ inputs.plan_id }}
         run: |
-          node ./source/.github/scripts/Write-ReleaseReceipt.mjs "$env:GITHUB_WORKSPACE/source" "$env:GITHUB_WORKSPACE/source" "$env:GITHUB_WORKSPACE/contract" "$env:RUNNER_TEMP/release-receipt"
-          if ($LASTEXITCODE -ne 0) { throw 'Read-only acceptance verification failed.' }
+          $config=@{
+            sourceRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            toolsRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            validatorRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            integrationRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            engineRoot=Join-Path $env:GITHUB_WORKSPACE 'bootstrap/Python_WSS_Integration_Lib'
+            coreRoot=Join-Path $env:GITHUB_WORKSPACE 'core'
+            outputRoot=Join-Path $env:RUNNER_TEMP 'release-receipt'
+          }
+          $configPath=Join-Path $env:RUNNER_TEMP 'receipt-config.json'
+          $config|ConvertTo-Json|Set-Content -LiteralPath $configPath
+          & node (Join-Path $config.engineRoot '.github/scripts/wss-ci/receipt.mjs') $configPath
+          if($LASTEXITCODE -ne 0){throw 'Common receipt verification failed.'}
       - uses: actions/upload-artifact@v4
+        if: ${{ success() }}
         with:
-          name: wss-acceptance-python-wrapper-${{ inputs.plan_id }}-a${{ github.run_attempt }}
+          name: ${{ steps.receipt.outputs.artifact_name }}
           retention-days: 90
           if-no-files-found: error
           path: ${{ runner.temp }}/release-receipt/receipt.json
