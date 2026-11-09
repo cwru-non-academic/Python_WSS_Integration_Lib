@@ -20,7 +20,15 @@ function shortPath(path) {
  return execFileSync('pwsh',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; (New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:WSS_PATH).ShortPath"],{encoding:'utf8',env:{...process.env,WSS_PATH:path}}).trim();
 }
 const roots=Object.fromEntries(['sourceRoot','validatorRoot','integrationRoot','engineRoot','coreRoot'].map(role=>[role,checkout(role+' long checkout')]));
-const shortRoots=process.platform==='win32'?Object.fromEntries(Object.entries(roots).map(([role,path])=>[role,shortPath(path)])):null;
+// 8.3 aliases are a volume capability, not an environment setting tests may change.
+let shortRoots,shortBase,aliasUnavailable;
+if(process.platform==='win32') {
+ try {
+  shortRoots=Object.fromEntries(Object.entries(roots).map(([role,path])=>[role,shortPath(path)]));
+  shortBase=shortPath(base);
+  if(shortBase.toLowerCase()===base.toLowerCase()||Object.keys(roots).some(role=>shortRoots[role].toLowerCase()===roots[role].toLowerCase()))aliasUnavailable='This volume does not expose distinct Windows 8.3 aliases';
+ } catch(error) {aliasUnavailable=`Windows 8.3 alias discovery unavailable: ${error.message}`;}
+}
 function configFor(profile,paths=roots) {
  const config={...paths,toolsRoot:profile.receipt.adapter_owner==='receiver'?paths.sourceRoot:paths.validatorRoot,outputRoot:join(base,'fresh output')};
  if(profile.role==='wrapper')for(const role of ['validatorRoot','integrationRoot','toolsRoot'])config[role]=paths.sourceRoot;
@@ -35,13 +43,14 @@ for(const [id,profile] of Object.entries(receiptProfiles)) {
   assert.throws(()=>receiptRoots({...config,engineRoot:config.sourceRoot},profile),/Undeclared overlapping/);
   assert.throws(()=>receiptRoots({...config,outputRoot:join(config.sourceRoot,'..receipt')},profile),/Undeclared overlapping/);
  });
- test(`${id}: mixed Windows 8.3 aliases retain all declared roles`,{skip:process.platform!=='win32'},()=>{
+ test(`${id}: mixed Windows 8.3 aliases retain all declared roles`,{skip:process.platform!=='win32'},t=>{
+  if(aliasUnavailable){t.skip(aliasUnavailable);return;}
   for(const role of Object.keys(roots)) {
    assert.notEqual(shortRoots[role].toLowerCase(),roots[role].toLowerCase(),'An actual distinct 8.3 alias is required');
    assert.equal(realpathSync.native(shortRoots[role]),roots[role]);
   }
   const mixed=configFor(profile,shortRoots);mixed.sourceRoot=roots.sourceRoot;
-  mixed.outputRoot=join(shortPath(base),'fresh output');
+  mixed.outputRoot=join(shortBase,'fresh output');
   assert.deepEqual(receiptRoots(mixed,profile),receiptRoots(configFor(profile),profile));
  });
 }
@@ -52,8 +61,9 @@ test('receipt workspace is a new canonical physical directory',()=>{
  finally {rmSync(work,{recursive:true,force:true});}
 });
 
-for(const alias of [false,true])test(`Node ${alias?'8.3 alias':'long'} TEMP passes physical workspace to child PowerShell inventory`,{skip:alias&&process.platform!=='win32'},()=>{
- const temp=alias?shortPath(base):base;
+for(const alias of [false,true])test(`Node ${alias?'8.3 alias':'long'} TEMP passes physical workspace to child PowerShell inventory`,{skip:alias&&process.platform!=='win32'},t=>{
+ if(alias&&aliasUnavailable){t.skip(aliasUnavailable);return;}
+ const temp=alias?shortBase:base;
  if(alias)assert.notEqual(temp.toLowerCase(),base.toLowerCase());
  const helper=resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core','tools/ci/shared/restored-assets/Universal-WssFiles.ps1');
  assert.equal(existsSync(helper),true,'Set WSS_CORE_REFERENCE to the reviewed Core checkout');
