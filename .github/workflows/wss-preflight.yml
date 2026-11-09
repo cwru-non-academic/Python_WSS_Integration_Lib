@@ -16,6 +16,7 @@ jobs:
   validate:
     uses: ./.github/workflows/_python-validation.yml
     with:
+      tools_sha: ${{ github.sha }}
       role: wrapper
       mode: candidate
       wrapper_sha: ${{ inputs.wrapper_sha }}

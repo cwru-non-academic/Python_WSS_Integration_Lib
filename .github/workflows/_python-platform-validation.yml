@@ -3,6 +3,7 @@ on:
   workflow_call:
     inputs:
       role: {type: string, required: true}
+      tools_sha: {type: string, required: true}
       wrapper_sha: {type: string, required: true}
       cli_sha: {type: string, default: ''}
       fixture_sha: {type: string, required: true}
@@ -32,6 +33,55 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
+      - name: Authenticate registered reusable caller and tooling identity
+        shell: pwsh
+        env:
+          ROLE: ${{ inputs.role }}
+          WRAPPER_SHA: ${{ inputs.wrapper_sha }}
+          CLI_SHA: ${{ inputs.cli_sha }}
+          TOOLS_SHA: ${{ inputs.tools_sha }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $repository=switch($env:ROLE){'wrapper'{'cwru-non-academic/Python_WSS_Integration_Lib'}'cli'{'cwru-non-academic/CLI_Python_WSS_Application'}default{throw 'Unregistered reusable role.'}}
+          if($env:GITHUB_REPOSITORY -cne $repository -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:WSS_CI_CHANNEL -cne $env:GITHUB_REF_NAME -or $env:GITHUB_REF -cne "refs/heads/$env:WSS_CI_CHANNEL"){throw 'Unregistered reusable caller/channel/event.'}
+          if($env:GITHUB_WORKFLOW_REF -cne "$repository/.github/workflows/wss-preflight.yml@$env:GITHUB_REF" -or $env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA){throw 'Reusable caller workflow/source mismatch.'}
+          $ownSha=if($env:ROLE -ceq 'wrapper'){$env:WRAPPER_SHA}else{$env:CLI_SHA}
+          if($ownSha -cne $env:GITHUB_SHA -or $ownSha -cnotmatch '^[a-f0-9]{40}$' -or $env:WRAPPER_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:TOOLS_SHA -cnotmatch '^[a-f0-9]{40}$'){throw 'Exact caller/product/tooling source required.'}
+          if($env:ROLE -ceq 'wrapper' -and $env:TOOLS_SHA -cne $env:GITHUB_SHA){throw 'Wrapper caller must bind its own authenticated tooling source.'}
+          # workflow_sha authenticates the caller only, never the reusable callee.
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ inputs.tools_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Verify immutable tooling before importing validators
+        shell: pwsh
+        env:
+          TOOLS_SHA: ${{ inputs.tools_sha }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $caller=Join-Path $env:GITHUB_WORKSPACE 'caller'
+          if((& git -C $caller rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or $LASTEXITCODE -ne 0){throw 'Caller checkout source mismatch.'}
+          if(@(& git -C $caller status --porcelain --untracked-files=all --ignore-submodules=all).Count -or $LASTEXITCODE -ne 0){throw 'Caller checkout must remain clean.'}
+          $expectedTools=$env:GITHUB_SHA
+          if($env:GITHUB_REPOSITORY -ceq 'cwru-non-academic/CLI_Python_WSS_Application'){
+              . ./caller/.github/scripts/Read-OrdinaryPythonTooling.ps1
+              $expectedTools=Get-OrdinaryPythonToolsSha $caller $env:GITHUB_SHA
+          }
+          if($env:TOOLS_SHA -cne $expectedTools){throw 'Tooling input differs from the authenticated caller pin.'}
+          $tools=Join-Path $env:GITHUB_WORKSPACE 'tools'
+          if((& git -C $tools rev-parse HEAD).Trim() -cne $env:TOOLS_SHA -or $LASTEXITCODE -ne 0){throw 'Tooling checkout differs from declared immutable source.'}
+          if(@(& git -C $tools status --porcelain --untracked-files=all).Count -or $LASTEXITCODE -ne 0){throw 'Tooling checkout must remain clean.'}
+          . ./tools/.github/scripts/PythonContract.ps1
+          . ./tools/.github/scripts/PythonProfiles/Tooling.ps1
+          Assert-PythonToolingBinding $tools $env:TOOLS_SHA (Join-Path $tools '.github/python-ci.json')
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.sdk }}
@@ -72,7 +122,7 @@ jobs:
         id: guard
         shell: pwsh
         run: |
-          $lock=Get-Content wrapper/.github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
+          $lock=Get-Content tools/.github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
           if($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cnotmatch '^[a-f0-9]{40}$' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)"){throw 'Invalid immutable Core guard lock.'}
           "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
       - uses: actions/checkout@v4
@@ -87,10 +137,10 @@ jobs:
           GH_TOKEN: ${{ steps.read.outputs.token }}
           CANDIDATE_JSON: ${{ inputs.candidate_json }}
         run: |
-          . ./wrapper/.github/scripts/PythonPromotion.ps1
+          . ./tools/.github/scripts/PythonPromotion.ps1
           $candidate = $env:CANDIDATE_JSON | ConvertFrom-Json
           Assert-PythonProducer $candidate
-          ./wrapper/.github/scripts/Resolve-WssRelease.ps1 -RunId $candidate.run_id -ExpectedArtifactId $candidate.artifact_id -ExpectedCommit $candidate.commit -ArchiveName $candidate.archive -ExpectedSha256 $candidate.sha256 -OutputRoot "$env:RUNNER_TEMP/resolved"
+          ./tools/.github/scripts/Resolve-WssRelease.ps1 -RunId $candidate.run_id -ExpectedArtifactId $candidate.artifact_id -ExpectedCommit $candidate.commit -ArchiveName $candidate.archive -ExpectedSha256 $candidate.sha256 -OutputRoot "$env:RUNNER_TEMP/resolved"
       # Use the locked Core harness, never executable code from the candidate.
       # Check the full extracted universal payload before consumer projection.
       - name: Verify Core universal package rejection fixtures
@@ -107,16 +157,19 @@ jobs:
           CLI_SHA: ${{ inputs.cli_sha }}
         run: |
           $options = @{
+            ToolsRoot = "$env:GITHUB_WORKSPACE/tools"
+            ToolsSha = '${{ inputs.tools_sha }}'
             WrapperRoot = "$env:GITHUB_WORKSPACE/wrapper"
             WrapperSha = $env:WRAPPER_SHA
             FixtureRoot = "$env:GITHUB_WORKSPACE/fixture"
             OutputRoot = "$env:RUNNER_TEMP/platform-results"
+            ConfigPath = "$env:GITHUB_WORKSPACE/tools/.github/python-ci.json"
             Mode = 'candidate'
             ArtifactRoot = "$env:RUNNER_TEMP/resolved/extracted/WSS-Universal"
             CandidatePath = "$env:RUNNER_TEMP/resolved/candidate.json"
           }
           if ($env:ROLE -ceq 'cli') { $options.CliRoot = "$env:GITHUB_WORKSPACE/cli"; $options.CliSha = $env:CLI_SHA }
-          ./wrapper/.github/scripts/Invoke-PlatformCompatibility.ps1 @options
+          ./tools/.github/scripts/Invoke-PlatformCompatibility.ps1 @options
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -147,6 +200,55 @@ jobs:
     env:
       WSS_EXPECTED_ARCHITECTURE: ${{ matrix.arch }}
     steps:
+      - name: Authenticate registered reusable caller and tooling identity
+        shell: pwsh
+        env:
+          ROLE: ${{ inputs.role }}
+          WRAPPER_SHA: ${{ inputs.wrapper_sha }}
+          CLI_SHA: ${{ inputs.cli_sha }}
+          TOOLS_SHA: ${{ inputs.tools_sha }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $repository=switch($env:ROLE){'wrapper'{'cwru-non-academic/Python_WSS_Integration_Lib'}'cli'{'cwru-non-academic/CLI_Python_WSS_Application'}default{throw 'Unregistered reusable role.'}}
+          if($env:GITHUB_REPOSITORY -cne $repository -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:WSS_CI_CHANNEL -cne $env:GITHUB_REF_NAME -or $env:GITHUB_REF -cne "refs/heads/$env:WSS_CI_CHANNEL"){throw 'Unregistered reusable caller/channel/event.'}
+          if($env:GITHUB_WORKFLOW_REF -cne "$repository/.github/workflows/wss-preflight.yml@$env:GITHUB_REF" -or $env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA){throw 'Reusable caller workflow/source mismatch.'}
+          $ownSha=if($env:ROLE -ceq 'wrapper'){$env:WRAPPER_SHA}else{$env:CLI_SHA}
+          if($ownSha -cne $env:GITHUB_SHA -or $ownSha -cnotmatch '^[a-f0-9]{40}$' -or $env:WRAPPER_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:TOOLS_SHA -cnotmatch '^[a-f0-9]{40}$'){throw 'Exact caller/product/tooling source required.'}
+          if($env:ROLE -ceq 'wrapper' -and $env:TOOLS_SHA -cne $env:GITHUB_SHA){throw 'Wrapper caller must bind its own authenticated tooling source.'}
+          # workflow_sha authenticates the caller only, never the reusable callee.
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ inputs.tools_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Verify immutable tooling before importing validators
+        shell: pwsh
+        env:
+          TOOLS_SHA: ${{ inputs.tools_sha }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $caller=Join-Path $env:GITHUB_WORKSPACE 'caller'
+          if((& git -C $caller rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or $LASTEXITCODE -ne 0){throw 'Caller checkout source mismatch.'}
+          if(@(& git -C $caller status --porcelain --untracked-files=all --ignore-submodules=all).Count -or $LASTEXITCODE -ne 0){throw 'Caller checkout must remain clean.'}
+          $expectedTools=$env:GITHUB_SHA
+          if($env:GITHUB_REPOSITORY -ceq 'cwru-non-academic/CLI_Python_WSS_Application'){
+              . ./caller/.github/scripts/Read-OrdinaryPythonTooling.ps1
+              $expectedTools=Get-OrdinaryPythonToolsSha $caller $env:GITHUB_SHA
+          }
+          if($env:TOOLS_SHA -cne $expectedTools){throw 'Tooling input differs from the authenticated caller pin.'}
+          $tools=Join-Path $env:GITHUB_WORKSPACE 'tools'
+          if((& git -C $tools rev-parse HEAD).Trim() -cne $env:TOOLS_SHA -or $LASTEXITCODE -ne 0){throw 'Tooling checkout differs from declared immutable source.'}
+          if(@(& git -C $tools status --porcelain --untracked-files=all).Count -or $LASTEXITCODE -ne 0){throw 'Tooling checkout must remain clean.'}
+          . ./tools/.github/scripts/PythonContract.ps1
+          . ./tools/.github/scripts/PythonProfiles/Tooling.ps1
+          Assert-PythonToolingBinding $tools $env:TOOLS_SHA (Join-Path $tools '.github/python-ci.json')
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.sdk }}
@@ -187,7 +289,7 @@ jobs:
         id: guard
         shell: pwsh
         run: |
-          $lock=Get-Content wrapper/.github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
+          $lock=Get-Content tools/.github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
           if($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cnotmatch '^[a-f0-9]{40}$' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)"){throw 'Invalid immutable Core guard lock.'}
           "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
       - uses: actions/checkout@v4
@@ -202,10 +304,10 @@ jobs:
           GH_TOKEN: ${{ steps.read.outputs.token }}
           CANDIDATE_JSON: ${{ inputs.candidate_json }}
         run: |
-          . ./wrapper/.github/scripts/PythonPromotion.ps1
+          . ./tools/.github/scripts/PythonPromotion.ps1
           $candidate = $env:CANDIDATE_JSON | ConvertFrom-Json
           Assert-PythonProducer $candidate
-          ./wrapper/.github/scripts/Resolve-WssRelease.ps1 -RunId $candidate.run_id -ExpectedArtifactId $candidate.artifact_id -ExpectedCommit $candidate.commit -ArchiveName $candidate.archive -ExpectedSha256 $candidate.sha256 -OutputRoot "$env:RUNNER_TEMP/resolved"
+          ./tools/.github/scripts/Resolve-WssRelease.ps1 -RunId $candidate.run_id -ExpectedArtifactId $candidate.artifact_id -ExpectedCommit $candidate.commit -ArchiveName $candidate.archive -ExpectedSha256 $candidate.sha256 -OutputRoot "$env:RUNNER_TEMP/resolved"
       - name: Verify candidate package, production transport selection and native ABI
         shell: pwsh
         env:
@@ -214,16 +316,19 @@ jobs:
           CLI_SHA: ${{ inputs.cli_sha }}
         run: |
           $options = @{
+            ToolsRoot = "$env:GITHUB_WORKSPACE/tools"
+            ToolsSha = '${{ inputs.tools_sha }}'
             WrapperRoot = "$env:GITHUB_WORKSPACE/wrapper"
             WrapperSha = $env:WRAPPER_SHA
             FixtureRoot = "$env:GITHUB_WORKSPACE/fixture"
             OutputRoot = "$env:RUNNER_TEMP/platform-results"
+            ConfigPath = "$env:GITHUB_WORKSPACE/tools/.github/python-ci.json"
             Mode = 'candidate'
             ArtifactRoot = "$env:RUNNER_TEMP/resolved/extracted/WSS-Universal"
             CandidatePath = "$env:RUNNER_TEMP/resolved/candidate.json"
           }
           if ($env:ROLE -ceq 'cli') { $options.CliRoot = "$env:GITHUB_WORKSPACE/cli"; $options.CliSha = $env:CLI_SHA }
-          ./wrapper/.github/scripts/Invoke-PlatformCompatibility.ps1 @options
+          ./tools/.github/scripts/Invoke-PlatformCompatibility.ps1 @options
       - name: Record native macOS architecture worker outcome
         if: always()
         shell: pwsh
@@ -233,7 +338,7 @@ jobs:
         run: |
           $root = Join-Path $env:RUNNER_TEMP 'platform-results'
           New-Item -ItemType Directory -Force -Path $root | Out-Null
-          . ./wrapper/.github/scripts/wss-ci/Evidence.ps1
+          . ./tools/.github/scripts/wss-ci/Evidence.ps1
           $identity=New-WssCiEvidenceIdentity $env:GITHUB_REPOSITORY $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT $env:GITHUB_SHA $env:EXPECTED_ARCHITECTURE
           @{schema='wss-macos-worker/v1';ci=$identity;architecture=$env:EXPECTED_ARCHITECTURE;conclusion=$env:WORKER_CONCLUSION;repository=$env:GITHUB_REPOSITORY;run_id=$env:GITHUB_RUN_ID;source_sha=$env:GITHUB_SHA} | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $root 'outcome.json')
       - uses: actions/upload-artifact@v4
@@ -255,12 +360,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Authenticate registered reusable caller and tooling identity
+        shell: pwsh
+        env:
+          ROLE: ${{ inputs.role }}
+          WRAPPER_SHA: ${{ inputs.wrapper_sha }}
+          CLI_SHA: ${{ inputs.cli_sha }}
+          TOOLS_SHA: ${{ inputs.tools_sha }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $repository=switch($env:ROLE){'wrapper'{'cwru-non-academic/Python_WSS_Integration_Lib'}'cli'{'cwru-non-academic/CLI_Python_WSS_Application'}default{throw 'Unregistered reusable role.'}}
+          if($env:GITHUB_REPOSITORY -cne $repository -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:WSS_CI_CHANNEL -cne $env:GITHUB_REF_NAME -or $env:GITHUB_REF -cne "refs/heads/$env:WSS_CI_CHANNEL"){throw 'Unregistered reusable caller/channel/event.'}
+          if($env:GITHUB_WORKFLOW_REF -cne "$repository/.github/workflows/wss-preflight.yml@$env:GITHUB_REF" -or $env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA){throw 'Reusable caller workflow/source mismatch.'}
+          $ownSha=if($env:ROLE -ceq 'wrapper'){$env:WRAPPER_SHA}else{$env:CLI_SHA}
+          if($ownSha -cne $env:GITHUB_SHA -or $ownSha -cnotmatch '^[a-f0-9]{40}$' -or $env:WRAPPER_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:TOOLS_SHA -cnotmatch '^[a-f0-9]{40}$'){throw 'Exact caller/product/tooling source required.'}
+          if($env:ROLE -ceq 'wrapper' -and $env:TOOLS_SHA -cne $env:GITHUB_SHA){throw 'Wrapper caller must bind its own authenticated tooling source.'}
+          # workflow_sha authenticates the caller only, never the reusable callee.
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/Python_WSS_Integration_Lib
-          ref: ${{ inputs.wrapper_sha }}
+          ref: ${{ inputs.tools_sha }}
           path: tools
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Verify immutable tooling before importing validators
+        shell: pwsh
+        env:
+          TOOLS_SHA: ${{ inputs.tools_sha }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $caller=Join-Path $env:GITHUB_WORKSPACE 'caller'
+          if((& git -C $caller rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or $LASTEXITCODE -ne 0){throw 'Caller checkout source mismatch.'}
+          if(@(& git -C $caller status --porcelain --untracked-files=all --ignore-submodules=all).Count -or $LASTEXITCODE -ne 0){throw 'Caller checkout must remain clean.'}
+          $expectedTools=$env:GITHUB_SHA
+          if($env:GITHUB_REPOSITORY -ceq 'cwru-non-academic/CLI_Python_WSS_Application'){
+              . ./caller/.github/scripts/Read-OrdinaryPythonTooling.ps1
+              $expectedTools=Get-OrdinaryPythonToolsSha $caller $env:GITHUB_SHA
+          }
+          if($env:TOOLS_SHA -cne $expectedTools){throw 'Tooling input differs from the authenticated caller pin.'}
+          $tools=Join-Path $env:GITHUB_WORKSPACE 'tools'
+          if((& git -C $tools rev-parse HEAD).Trim() -cne $env:TOOLS_SHA -or $LASTEXITCODE -ne 0){throw 'Tooling checkout differs from declared immutable source.'}
+          if(@(& git -C $tools status --porcelain --untracked-files=all).Count -or $LASTEXITCODE -ne 0){throw 'Tooling checkout must remain clean.'}
+          . ./tools/.github/scripts/PythonContract.ps1
+          . ./tools/.github/scripts/PythonProfiles/Tooling.ps1
+          Assert-PythonToolingBinding $tools $env:TOOLS_SHA (Join-Path $tools '.github/python-ci.json')
       - uses: actions/download-artifact@v4
         with:
           pattern: python-preflight-platform-macOS-*

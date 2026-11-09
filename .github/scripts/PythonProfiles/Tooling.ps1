@@ -26,3 +26,18 @@ function Resolve-PythonOrdinaryTooling {
     $config.multidevice_expected_cases=@($contract.multi_cases | Select-Object -Skip 10)
     [pscustomobject]@{config=$config;profile=$profile;projection=$projection;fixture_commit=$contract.fixture_commit;tooling_root=[IO.Path]::GetFullPath($ToolsRoot);tooling_sha=$ToolsSha;tooling_config_sha256=(Get-FileHash -LiteralPath $ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
+function Resolve-PythonCandidateTooling {
+    param([Parameter(Mandatory)][string]$ToolsRoot,[Parameter(Mandatory)][string]$ToolsSha,[Parameter(Mandatory)][string]$ConfigPath,[Parameter(Mandatory)][string]$WrapperRoot,[Parameter(Mandatory)][string]$WrapperSha)
+    Assert-PythonToolingBinding $ToolsRoot $ToolsSha $ConfigPath
+    Assert-PythonSource $WrapperRoot $WrapperSha
+    $toolConfig=Read-PythonConfig $ConfigPath
+    $productConfigPath=Join-Path $WrapperRoot '.github/python-ci.json'
+    $productConfig=Read-PythonConfig $productConfigPath
+    foreach($key in @('schema','automated_execution','dotnet_sdk','python_version','pythonnet_version')){if($toolConfig.$key -cne $productConfig.$key){throw 'Product runtime differs from reviewed tooling configuration.'}}
+    if($toolConfig.baseline_ready -cne $true -or $productConfig.baseline_ready -cne $true){throw 'Candidate promotion baseline approval remains pending.'}
+    if($env:GITHUB_REF -ceq 'refs/heads/main'){
+        foreach($config in @($toolConfig,$productConfig)){if(!$config.PSObject.Properties['channels'] -or @($config.channels) -cnotcontains 'main'){throw 'Main candidate capability has not been adopted.'}}
+    }
+    # Product and selected-test authority never comes from the tooling checkout.
+    [pscustomobject]@{config=$productConfig;product_config_path=$productConfigPath;tooling_root=[IO.Path]::GetFullPath($ToolsRoot);tooling_sha=$ToolsSha;tooling_config_sha256=(Get-FileHash -LiteralPath $ConfigPath).Hash.ToLowerInvariant()}
+}
