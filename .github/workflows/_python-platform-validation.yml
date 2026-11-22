@@ -174,7 +174,7 @@ jobs:
         if: always()
         with:
           name: python-preflight-platform-${{ matrix.name }}
-          retention-days: 14
+          retention-days: 90
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/platform-results/platform.json
@@ -345,7 +345,7 @@ jobs:
         if: always()
         with:
           name: python-preflight-platform-${{ matrix.name }}
-          retention-days: 14
+          retention-days: 90
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/platform-results/platform.json
@@ -422,6 +422,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: python-preflight-platform-macOS
-          retention-days: 14
+          retention-days: 90
           if-no-files-found: error
           path: ${{ runner.temp }}/macos-complete/
