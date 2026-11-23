@@ -49,19 +49,23 @@ function sources(root,id){
  if(p.receipt.configuration)put(root,p.receipt.configuration,JSON.stringify({baseline_ready:true,candidate_preflight_ready:true}));
 }
 let sequence=0;const cases=new Map();
-function fixture(id,channel,{legacyAuthority=false}={}){
- const key=`${id}/${channel}${legacyAuthority?'/legacy-authority':''}`;if(cases.has(key))return cases.get(key).reset();
+function fixture(id,channel,{legacyAuthority=false,validatorDrift=false}={}){
+ const key=`${id}/${channel}${legacyAuthority?'/legacy-authority':''}${validatorDrift?'/validator-drift':''}`;if(cases.has(key))return cases.get(key).reset();
  const home=join(base,`case ${++sequence} ${id} ${channel}`);mkdirSync(home);
  const profile=receiptProfiles[id],app=profile.role!=='wrapper',source=join(home,'accepted'),validator=app?join(home,'validator'):source,integration=app?join(home,'integration'):source;
- let V=P;
- if(app){sources(validator,profile.wrapper);V=commit(validator);cpSync(validator,integration,{recursive:true});}
+ let V=P,I=P;
+ if(app){
+  sources(validator,profile.wrapper);V=I=commit(validator);
+  cpSync(validator,integration,{recursive:true});
+  if(validatorDrift){put(validator,'.github/scripts/independent-test.ps1','# unrelated CI change\n');V=commit(validator);}
+ }
  sources(source,id);put(source,'.github/workflows/release-receipt.yml',renderReceiptWorkflow(id,{core:C,engine:P,validator:V}).text);
- if(app)for(const path of Object.values(profile.target.parents))git(source,'update-index','--add','--cacheinfo',`160000,${V},${path}`);
+ if(app)for(const path of Object.values(profile.target.parents))git(source,'update-index','--add','--cacheinfo',`160000,${I},${path}`);
  const head=commit(source),context=channelContext(channel),m=JSON.parse(readFileSync(join(core,`tools/release/targets.${channel}.json`)));
  if(legacyAuthority)delete m.workflow_authority;
  const t=m.targets.find(t=>t.id===id),zip=Buffer.from('canonical archive');
  const candidate={repository:CORE,commit:sha(1),run_id:'1',artifact_id:'2',archive:'WSS-Universal-ci.zip',sha256:bytesDigest(zip)};
- const snapshots=Object.fromEntries(m.targets.map(target=>{const root=target.id===id?source:target.id===profile.wrapper?validator:null;return [target.id,{head_sha:sha(2),trusted:Object.fromEntries(target.trusted_paths.map(path=>[path,root?git(root,'rev-parse',`HEAD:${path}`):sha(3)]))}];}));
+ const snapshots=Object.fromEntries(m.targets.map(target=>{const root=target.id===id?source:target.id===profile.wrapper?integration:null;return [target.id,{head_sha:sha(2),trusted:Object.fromEntries(target.trusted_paths.map(path=>[path,root?git(root,'rev-parse',`HEAD:${path}`):sha(3)]))}];}));
  const ws=Object.fromEntries(m.targets.flatMap(target=>{const row=(key,branch,role)=>[`${target.id}:${key}`,{repository:target.repository,branch,...(role?{role}:{}),source_sha:sha(2),tree_sha:target.id===id?git(source,'rev-parse','HEAD:.github/workflows'):sha(3)}];return channel==='main'?[row('accepted-baseline','main','accepted-baseline'),...(target.kind==='payload'?[row('execution-authority','main','execution-authority'),row('counterpart','dev','counterpart')]:[])]:[row('dev','dev'),...(target.kind==='payload'?[row('main','main')]:[])];}));
  const body={schema:context.planSchema,channel,candidate,manifest:m,manifest_sha256:digest(m),target_snapshots:snapshots,workflow_snapshots:{schema:channel==='main'?'wss-workflow-snapshots/v2':'wss-workflow-snapshots/v1',targets:ws}},plan={...body,plan_id:digest(body)};
  const pr={number:10,merged:true,state:'closed',merge_commit_sha:head,merged_at:'2026-11-01T00:00:00Z',user:{type:'Bot'},merged_by:{type:'User'},base:{ref:channel,repo:{full_name:t.repository}},head:{sha:sha(4),ref:`automation/${profile.family}-wss-1-${candidate.sha256}`,repo:{full_name:t.repository}}};
@@ -71,12 +75,12 @@ function fixture(id,channel,{legacyAuthority=false}={}){
  const richBytes=Buffer.from('rich proof ZIP'),candidateBytes=candidateZip(candidate);
  const proofArtifact=(run,name)=>({id:(name==='rich-proof'?1000:2000)+Number(run)-30,name,digest:'sha256:'+bytesDigest(name==='rich-proof'?richBytes:candidateBytes),expired:false,workflow_run:{id:Number(run),head_sha:sha(2)}});
  const state={normal:[normal],associations:[pr],proofs,late:false};
- const g={head:(repo,branch)=>repo===CORE?sha(1):repo===t.repository?(state.late&&existsSync(env.WSS_TEST_SENTINEL)?sha(9):head):V,
+ const g={head:(repo,branch)=>repo===CORE?sha(1):repo===t.repository?(state.late&&existsSync(env.WSS_TEST_SENTINEL)?sha(9):head):I,
  get:path=>path.includes('/actions/artifacts/')?proofArtifact(String(30+Number(path.split('/').at(-1))%1000),Number(path.split('/').at(-1))<2000?'rich-proof':'wss-candidate-provenance'):path.includes('/contents/')?{type:'file',encoding:'base64',content:Buffer.from(JSON.stringify(m)).toString('base64')}:pr,
  run:(repo,run)=>String(run)==='1'?producer:String(run)==='99'?{...identity,id:99,event:'workflow_dispatch',path:'.github/workflows/release-receipt.yml'}:String(run)==='20'?normal:{...identity,id:Number(run),head_sha:sha(2),event:'workflow_dispatch',path:'.github/workflows/wss-preflight.yml',status:'completed',conclusion:'success'},
  pages:path=>path.includes('/artifacts')?['rich-proof','wss-candidate-provenance'].map(name=>proofArtifact(path.split('/runs/')[1].split('/')[0],name)):path.includes('/commits/')?state.associations:state.normal,
  artifactBytes:(repo,id)=>Number(id)<2000?richBytes:candidateBytes,
- object:(repo,ref,path)=>path==='.github/workflows'?{type:'tree',sha:git(source,'rev-parse','HEAD:.github/workflows')}:Object.values(t.parents).includes(path)?{type:'commit',mode:'160000',sha:V}:{sha:snapshots[id].trusted[path]},
+ object:(repo,ref,path)=>path==='.github/workflows'?{type:'tree',sha:git(source,'rev-parse','HEAD:.github/workflows')}:Object.values(t.parents).includes(path)?{type:'commit',mode:'160000',sha:I}:{sha:snapshots[id].trusted[path]},
  jobs:(repo,r)=>r.path==='.github/workflows/wss-preflight.yml'?[{id:900,name:'Native proof',status:'completed',conclusion:'success'}]:(repo===CORE?CORE_JOBS:t.jobs).map(name=>({name,status:'completed',conclusion:'success'})),artifact:()=>artifact,tree:()=>sha(6),
  download:(repo,run,name)=>name==='wss-propagation-plan'?{'plan.json':Buffer.from(JSON.stringify(plan))}:name==='universal-release-assets'?{[candidate.archive]:zip,'SHA256SUMS.txt':Buffer.from(`${candidate.sha256}  ${candidate.archive}\n`)}:{'candidate.json':Buffer.from(JSON.stringify(candidate))}};
  const env={...process.env,GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_REF:context.ref,GITHUB_SHA:head,GITHUB_REPOSITORY:t.repository,GITHUB_RUN_ID:'99',GITHUB_RUN_ATTEMPT:'1',TARGET_ID:id,PRODUCER_RUN_ID:'1',PLAN_ID:plan.plan_id,WSS_CI_CHANNEL:channel,GITHUB_WORKFLOW_SHA:head,GITHUB_WORKFLOW_REF:`${t.repository}/.github/workflows/release-receipt.yml@refs/heads/${channel}`,WSS_RECEIPT_ENGINE_SHA:P,WSS_RECEIPT_CORE_SHA:C,WSS_RECEIPT_VALIDATOR_SHA:V,WSS_TEST_SENTINEL:join(home,'native ran.txt'),WSS_TEST_PROOFS:join(home,'proofs.json'),WSS_TEST_MODE:'',GITHUB_OUTPUT:join(home,'outputs.txt')};
@@ -91,6 +95,11 @@ function fixture(id,channel,{legacyAuthority=false}={}){
  };
  cases.set(key,f);return f;
 }
+for(const channel of ['dev','main'])for(const id of ['csharp-cli','python-cli','unity-gui','matlab-cli','python-ros'])test(`${id}/${channel}: receipt uses tested integration despite unrelated validator pin drift`,async()=>{
+ const f=fixture(id,channel,{validatorDrift:true}),receipt=await f.run();
+ assert.equal(receipt.parents[receiptProfiles[id].wrapper],git(f.config.integrationRoot,'rev-parse','HEAD'));
+ assert.notEqual(f.env.WSS_RECEIPT_VALIDATOR_SHA,receipt.parents[receiptProfiles[id].wrapper]);
+});
 // Exercise physical checkout identity independently of the receipt network/adapter
 // fixture. Windows must exercise a real filesystem 8.3 alias, not a mocked path.
 function rootFixture() {

@@ -17,7 +17,7 @@ function json(g,path){const file=g.get(path);requireThat(file.type==='file'&&fil
 export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainWorkflowAuthority,env=process.env}={}) {
   const profile=Object.values(profiles).find(p=>p.role==='wrapper'&&p.target.repository===c.repository);
   requireThat(profile,'Only registered integrations may notify the stage');
-  const t=profile.target,source=targets[profile.family];let head,pr,context;
+  const t=profile.target,source=targets[profile.family];let head,pr,context,completedWorkflow;
   // Both events execute the workflow on the default branch. The event's
   // dependency merge is evidence to inspect, never executable workflow source.
   requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/main` && c.sourceSha===g.head(c.repository,'main'),'Notification must execute current trusted main');
@@ -29,7 +29,10 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
     const id=String(c.event.workflow_run?.id);requireThat(/^[1-9][0-9]*$/.test(id),'Missing completed CI identity');
     const run=g.run(c.repository,id);head=run.head_sha;
     context=channelContext(run.head_branch);
-    requireThat(run.repository?.full_name===c.repository&&run.head_repository?.full_name===c.repository&&run.path===t.workflow&&['push','workflow_dispatch'].includes(run.event)&&run.status==='completed'&&run.conclusion==='success','Wake-up is not successful committed integration CI');
+    completedWorkflow=run.path;
+    const normal=completedWorkflow===t.workflow&&['push','workflow_dispatch'].includes(run.event);
+    const receipt=completedWorkflow==='.github/workflows/release-receipt.yml'&&run.event==='workflow_dispatch';
+    requireThat(run.repository?.full_name===c.repository&&run.head_repository?.full_name===c.repository&&(normal||receipt)&&run.status==='completed'&&run.conclusion==='success','Wake-up is not successful committed integration CI or a library receipt');
     const prs=g.pages(`repos/${c.repository}/commits/${head}/pulls`).filter(p=>p.merged_at&&p.merge_commit_sha===head&&p.base?.ref===context.branch);
     if(prs.length===0)return {needed:false,reason:'Committed CI has no dependency PR to advance.'};
     requireThat(prs.length===1,'Completion is not a unique dependency merge');pr=g.get(`repos/${c.repository}/pulls/${prs[0].number}`);
@@ -69,17 +72,20 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
   const policy=json(g,`repos/${CORE}/contents/${context.stagePolicy}?ref=${p.candidate.commit}`);
   const family=policy.libraries?.find(lib=>lib.id===profile.family);
   requireThat(policy.schema===context.stageSchema&&policy.channel===context.channel&&family?.repository===c.repository&&family.record===source.record&&same(family.applications,source.applications),'Unreviewed family stage policy');
-  if(policy.application_fanout!=='per-integration')return {needed:false,reason:'Earlier frozen policy uses scheduled all-integration staging.'};
+  const requiresReceipts=policy.application_fanout==='after-integration-receipts';
+  if(!requiresReceipts&&policy.application_fanout!=='per-integration')return {needed:false,reason:'Earlier frozen policy uses scheduled all-integration staging.'};
+  if(!requiresReceipts&&completedWorkflow==='.github/workflows/release-receipt.yml')return {needed:false,reason:'The current stage does not wait for library receipts.'};
   const producer=g.run(CORE,p.candidate.run_id);
   requireThat(producer.repository?.full_name===CORE&&producer.head_repository?.full_name===CORE&&producer.path==='.github/workflows/artifacts.yml'&&producer.head_branch===context.branch&&producer.head_sha===p.candidate.commit&&producer.event==='push'&&producer.status==='completed'&&producer.conclusion==='success','Notification producer is not canonical and successful');
   if(context.channel==='main')authorize({target_id:t.id,repository_root:env.GITHUB_WORKSPACE,candidate:p.candidate},env);
-  return {needed:true,producer_run_id:p.candidate.run_id,family:profile.family,...(context.channel==='main'?{channel:'main'}:{})};
+  return {needed:true,producer_run_id:p.candidate.run_id,family:profile.family,...(context.channel==='main'?{channel:'main'}:{}),
+    ...(requiresReceipts&&completedWorkflow===t.workflow?{receipt_reconciliation:true}:{})};
 }
 if(isEntrypoint(import.meta.url)){
   requireThat(process.env.GITHUB_ACTIONS==='true','Notifications execute only trusted hosted workflows');
   const sourceSha=process.env.GITHUB_WORKFLOW_SHA;
   requireThat(/^[a-f0-9]{40}$/.test(sourceSha||'')&&execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()===sourceSha,'Notifier checkout must match the immutable workflow revision');
   const result=prepareFamilyWakeup(new GitHub(),{repository:process.env.GITHUB_REPOSITORY,eventName:process.env.GITHUB_EVENT_NAME,event:JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH)),sourceSha,workflowRef:process.env.GITHUB_WORKFLOW_REF});
-  appendFileSync(process.env.GITHUB_OUTPUT,`needed=${result.needed}\nproducer_run_id=${result.producer_run_id||''}\nchannel=${result.channel||'dev'}\n`);
+  appendFileSync(process.env.GITHUB_OUTPUT,`needed=${result.needed}\nproducer_run_id=${result.producer_run_id||''}\nchannel=${result.channel||'dev'}\nreceipt_reconciliation=${result.receipt_reconciliation===true}\n`);
   if(process.env.GITHUB_STEP_SUMMARY)appendFileSync(process.env.GITHUB_STEP_SUMMARY,`Family stage wake-up: ${result.needed?result.family:result.reason}. This does not accept or publish a release.\n`);
 }

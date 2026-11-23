@@ -85,6 +85,16 @@ function authenticatedFixture(){
   delete f.loadFrozenPlan;return f;
 }
 test('production loader authenticates distinct channel authority from producer artifact and immutable policy',()=>{const f=authenticatedFixture();assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);});
+for(const channel of ['dev','main'])test(`${channel} committed library CI wakes receipts and a completed receipt wakes the stage`,()=>{
+  const f=fixture('python',channel);
+  f.stage.application_fanout='after-integration-receipts';
+  f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}}};
+  assert.equal(prepareFamilyWakeup(f.g,f.context,f).receipt_reconciliation,true);
+  f.run.path='.github/workflows/release-receipt.yml';
+  const wake=prepareFamilyWakeup(f.g,f.context,f);
+  assert.equal(wake.needed,true);
+  assert.equal(wake.receipt_reconciliation,undefined);
+});
 test('execution-source policy ignores workflow tree drift and rejects a different notifier commit',()=>{
   const f=authenticatedFixture();
   f.p.manifest.workflow_authority=f.reviewed.workflow_authority='executed-source';

@@ -4,7 +4,7 @@ on:
     types: [closed]
     branches: [dev, main]
   workflow_run:
-    workflows: [WSS integration compatibility]
+    workflows: [WSS integration compatibility, Verify release acceptance]
     types: [completed]
     branches: [dev, main]
 permissions:
@@ -68,5 +68,5 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.coordinator.outputs.token }}
           PRODUCER_RUN_ID: ${{ steps.family.outputs.producer_run_id }}
-          CORE_WORKFLOW: ${{ steps.family.outputs.channel == 'main' && 'main-propagation.yml' || 'dev-propagation.yml' }}
+          CORE_WORKFLOW: ${{ format('{0}-{1}.yml', steps.family.outputs.channel, steps.family.outputs.receipt_reconciliation == 'true' && 'release' || 'propagation') }}
         run: gh api --method POST "repos/cwru-non-academic/WSSCore/actions/workflows/$CORE_WORKFLOW/dispatches" -f ref=main -f "inputs[producer_run_id]=$PRODUCER_RUN_ID" -f 'inputs[mode]=reconcile'
