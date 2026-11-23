@@ -18,9 +18,7 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
   const profile=Object.values(profiles).find(p=>p.target.repository===c.repository);
   requireThat(profile,'Only registered receivers may notify the coordinator');
   const t=profile.target,source=targets[profile.family],wrapper=profile.role==='wrapper';let head,pr,context,completedWorkflow;
-  // Both events execute the workflow on the default branch. The event's
-  // dependency merge is evidence to inspect, never executable workflow source.
-  requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/main` && c.sourceSha===g.head(c.repository,'main'),'Notification must execute current trusted main');
+  requireThat(/^[a-f0-9]{40}$/.test(c.sourceSha),'Missing exact notifier workflow source');
   requireThat(typeof source?.record==='string'&&source.record.length>0,'Missing integration record adapter');
   if(c.eventName==='pull_request_target'){
     requireThat(c.event.pull_request?.number>0,'Missing closed dependency PR');
@@ -51,10 +49,15 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
   requireThat(p.channel===context.channel&&same(record.candidate,p.candidate)&&g.head(CORE,context.branch)===p.candidate.commit,'Notification candidate or Core source moved');
   plan(p);targetPolicy(p,t.id);
   const main=context.channel==='main';
+  const executedSource=p.manifest.workflow_authority==='executed-source';
+  // A PR-target workflow runs from the PR's base, while workflow_run uses main.
+  const workflowRef=executedSource&&c.eventName==='pull_request_target'?context.ref:'refs/heads/main';
+  requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@${workflowRef}`&&
+    (executedSource||c.sourceSha===g.head(c.repository,'main')),'Notification must execute its current trusted main or PR base workflow');
   // Legacy campaigns retain their original notification checks. New campaigns
   // already bind this notifier to its registered workflow and exact checkout.
-  if(!wrapper&&p.manifest.workflow_authority!=='executed-source')return {needed:false,reason:'Earlier campaigns do not use application notifications.'};
-  if(p.manifest.workflow_authority!=='executed-source') {
+  if(!wrapper&&!executedSource)return {needed:false,reason:'Earlier campaigns do not use application notifications.'};
+  if(!executedSource) {
     const schema=main?'wss-workflow-snapshots/v2':'wss-workflow-snapshots/v1';
     const snapshots=p.workflow_snapshots,authority=snapshots?.targets?.[t.id+(main?':execution-authority':':main')];
     requireThat(p.manifest.workflow_snapshot_policy===schema&&snapshots?.schema===schema&&

@@ -97,17 +97,17 @@ for(const channel of ['dev','main'])test(`${channel} committed library CI wakes 
 });
 for(const channel of ['dev','main'])test(`${channel} app merge, normal CI and receipt wake the same acceptance controller`,()=>{
   const f=fixture('python',channel),app=targetForChannel(profiles['python-cli'].target,channel);
-  const repo=app.repository,workflowRef=`${repo}/.github/workflows/notify-core-stage.yml@refs/heads/main`;
+  const repo=app.repository,workflowPath=`${repo}/.github/workflows/notify-core-stage.yml`;
   f.p.manifest.workflow_authority='executed-source';rehash(f);
   f.stage.application_fanout='after-integration-receipts';
   f.pr.base.repo.full_name=f.pr.head.repo.full_name=repo;
-  f.context={...f.context,repository:repo,workflowRef};
+  f.context={...f.context,repository:repo,workflowRef:`${workflowPath}@refs/heads/${channel}`};
   f.g.object=(_repo,_ref,path)=>{
     assert.equal(path,app.parents['python-wrapper']);
     return {type:'commit',mode:'160000',sha:f.pr.merge_commit_sha};
   };
   assert.equal(prepareFamilyWakeup(f.g,f.context,f).receipt_reconciliation,true);
-  f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}}};
+  f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}},workflowRef:`${workflowPath}@refs/heads/main`};
   f.run.repository.full_name=f.run.head_repository.full_name=repo;
   for(const path of [app.workflow,'.github/workflows/release-receipt.yml']){
     f.run.path=path;
@@ -116,13 +116,14 @@ for(const channel of ['dev','main'])test(`${channel} app merge, normal CI and re
   f.g.object=()=>({type:'commit',mode:'160000',sha:sha(9)});
   assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/accepted integration gitlink/);
 });
-test('execution-source policy ignores workflow tree drift and rejects a different notifier commit',()=>{
+test('execution-source policy runs dev merge notifications from the dev base without comparing workflow trees',()=>{
   const f=authenticatedFixture();
   f.p.manifest.workflow_authority=f.reviewed.workflow_authority='executed-source';
   rehash(f);
+  f.context.workflowRef=f.context.workflowRef.replace('/main','/dev');
   f.g.object=()=>{throw Error('Notification should not read frozen Git trees');};
   assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);
-  f.context.sourceSha=sha(8);
+  f.context.workflowRef=f.context.workflowRef.replace('/dev','/main');
   assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/current trusted main/);
 });
 for(const [label,change] of [
