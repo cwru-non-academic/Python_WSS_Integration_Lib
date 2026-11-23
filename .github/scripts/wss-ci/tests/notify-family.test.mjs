@@ -85,6 +85,15 @@ function authenticatedFixture(){
   delete f.loadFrozenPlan;return f;
 }
 test('production loader authenticates distinct channel authority from producer artifact and immutable policy',()=>{const f=authenticatedFixture();assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);});
+test('execution-source policy ignores workflow tree drift and rejects a different notifier commit',()=>{
+  const f=authenticatedFixture();
+  f.p.manifest.workflow_authority=f.reviewed.workflow_authority='executed-source';
+  rehash(f);
+  f.g.object=()=>{throw Error('Notification should not read frozen Git trees');};
+  assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);
+  f.context.sourceSha=sha(8);
+  assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/current trusted main/);
+});
 for(const [label,change] of [
   ['rehashed unreviewed policy',f=>{f.p.manifest.workflow_snapshot_policy='unknown';rehash(f);}],
   ['foreign producer repository',f=>{const base=f.g.run;f.g.run=r=>r===core?{...base(r),repository:{full_name:'other/repo'}}:base(r);}],

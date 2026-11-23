@@ -41,28 +41,30 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
   const p=loadFrozenPlan(g,record.candidate.run_id);
   requireThat(p.channel===context.channel&&same(record.candidate,p.candidate)&&g.head(CORE,context.branch)===p.candidate.commit,'Notification candidate or Core source moved');
   plan(p);targetPolicy(p,t.id);
-  // Accepted channel and MAIN execution have separate immutable authorities.
-  // loadPlan authenticates this snapshot against the canonical producer artifact
-  // and its immutable policy; plan verifies the complete envelope digest.
-  const main=context.channel==='main',schema=main?'wss-workflow-snapshots/v2':'wss-workflow-snapshots/v1';
-  const snapshots=p.workflow_snapshots,authority=snapshots?.targets?.[t.id+(main?':execution-authority':':main')];
-  requireThat(p.manifest.workflow_snapshot_policy===schema&&snapshots?.schema===schema&&
-    same(Object.keys(snapshots).sort(),['schema','targets'])&&authority&&
-    same(Object.keys(authority).sort(),['branch','repository',...(main?['role']:[]),'source_sha','tree_sha'].sort())&&
-    authority.repository===c.repository&&authority.branch==='main'&&(!main||authority.role==='execution-authority')&&
-    /^[a-f0-9]{40}$/.test(authority.source_sha)&&/^[a-f0-9]{40}$/.test(authority.tree_sha)&&
-    (!main||authority.source_sha===p.target_snapshots[t.id].head_sha),'Invalid frozen notification MAIN authority');
-  const object=(ref,path)=>{
-    const value=g.object(c.repository,ref,path);
-    requireThat(value&&['blob','tree'].includes(value.type)&&/^[a-f0-9]{40}$/.test(value.sha),'Invalid notification authority Git object');
-    return value;
-  };
-  const workflow=object(authority.source_sha,'.github/workflows'),actualWorkflow=object(c.sourceSha,'.github/workflows');
-  requireThat(workflow.type==='tree'&&actualWorkflow.type==='tree'&&workflow.sha===authority.tree_sha&&actualWorkflow.sha===authority.tree_sha,'Notification workflows differ from frozen MAIN authority');
-  for(const path of t.trusted_paths){
-    requireThat(object(head,path).sha===p.target_snapshots[t.id].trusted[path],'Notification tooling differs from frozen channel policy');
-    const frozen=object(authority.source_sha,path),actual=object(c.sourceSha,path);
-    requireThat(actual.type===frozen.type&&actual.sha===frozen.sha,'Notification tooling differs from frozen MAIN authority');
+  const main=context.channel==='main';
+  // Legacy campaigns retain their original notification checks. New campaigns
+  // already bind this notifier to its registered workflow and exact checkout.
+  if(p.manifest.workflow_authority!=='executed-source') {
+    const schema=main?'wss-workflow-snapshots/v2':'wss-workflow-snapshots/v1';
+    const snapshots=p.workflow_snapshots,authority=snapshots?.targets?.[t.id+(main?':execution-authority':':main')];
+    requireThat(p.manifest.workflow_snapshot_policy===schema&&snapshots?.schema===schema&&
+      same(Object.keys(snapshots).sort(),['schema','targets'])&&authority&&
+      same(Object.keys(authority).sort(),['branch','repository',...(main?['role']:[]),'source_sha','tree_sha'].sort())&&
+      authority.repository===c.repository&&authority.branch==='main'&&(!main||authority.role==='execution-authority')&&
+      /^[a-f0-9]{40}$/.test(authority.source_sha)&&/^[a-f0-9]{40}$/.test(authority.tree_sha)&&
+      (!main||authority.source_sha===p.target_snapshots[t.id].head_sha),'Invalid frozen notification MAIN authority');
+    const object=(ref,path)=>{
+      const value=g.object(c.repository,ref,path);
+      requireThat(value&&['blob','tree'].includes(value.type)&&/^[a-f0-9]{40}$/.test(value.sha),'Invalid notification authority Git object');
+      return value;
+    };
+    const workflow=object(authority.source_sha,'.github/workflows'),actualWorkflow=object(c.sourceSha,'.github/workflows');
+    requireThat(workflow.type==='tree'&&actualWorkflow.type==='tree'&&workflow.sha===authority.tree_sha&&actualWorkflow.sha===authority.tree_sha,'Notification workflows differ from frozen MAIN authority');
+    for(const path of t.trusted_paths){
+      requireThat(object(head,path).sha===p.target_snapshots[t.id].trusted[path],'Notification tooling differs from frozen channel policy');
+      const frozen=object(authority.source_sha,path),actual=object(c.sourceSha,path);
+      requireThat(actual.type===frozen.type&&actual.sha===frozen.sha,'Notification tooling differs from frozen MAIN authority');
+    }
   }
   const policy=json(g,`repos/${CORE}/contents/${context.stagePolicy}?ref=${p.candidate.commit}`);
   const family=policy.libraries?.find(lib=>lib.id===profile.family);
