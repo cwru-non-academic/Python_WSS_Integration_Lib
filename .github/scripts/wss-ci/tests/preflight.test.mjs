@@ -9,8 +9,9 @@ const candidate={repository:'cwru-non-academic/WSSCore',commit:sha(1),run_id:'12
 function fixture(){
   const context={repository,candidate,wrapper_sha:sha(2),application_sha:sha(3)},expected=request(context);
   const run={id:56,repository:{full_name:repository},head_repository:{full_name:repository},path:'.github/workflows/wss-preflight.yml',head_sha:sha(2),head_branch:'dev',event:'workflow_dispatch',display_title:expected.title,status:'completed',conclusion:'success'};
-  const f={context,expected,run,runs:[],posts:0,time:0};
-  f.g={head:()=>sha(2),pages:()=>f.runs,run:()=>f.run};
+  const producer={id:12,repository:{full_name:candidate.repository},head_repository:{full_name:candidate.repository},path:'.github/workflows/artifacts.yml',head_sha:candidate.commit,head_branch:'dev',event:'push',status:'in_progress',created_at:'2026-11-22T12:00:00Z'};
+  const f={context,expected,run,producer,runs:[],posts:0,time:0};
+  f.g={head:()=>sha(2),pages:path=>{assert.match(path,/&created=%3E%3D2026-11-22T12%3A00%3A00Z$/);return f.runs;},run:repo=>repo===candidate.repository?f.producer:f.run};
   f.options={now:()=>f.time,pause:async ms=>{f.time+=ms;},post:async()=>{f.posts++;f.runs=[f.run];}};
   return f;
 }
@@ -82,12 +83,12 @@ test('HTTP error performs one POST, cleans request file and does not expose cred
   assert.equal(count,1);assert.equal(existsSync(path),false);
 });
 test('main uses the same serializer but binds the immutable producer and frozen main target',async()=>{
-  const f=fixture();f.context.channel='main';f.run.head_branch='main';
+  const f=fixture();f.context.channel='main';f.run.head_branch='main';f.producer.head_branch='main';
   const manifest=JSON.parse(readFileSync(resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core','tools/release/targets.main.json')));
   const p={channel:'main',candidate,manifest,target_snapshots:{'python-wrapper':{head_sha:sha(2)}}};
   f.g.head=(repo,branch)=>{assert.equal(branch,'main');return repo===candidate.repository?candidate.commit:sha(2);};
   f.options.loadFrozenPlan=()=>p;
   assert.equal((await startPreflight(f.g,f.context,f.options)).id,56);assert.equal(f.posts,1);assert.equal(request(f.context).body.ref,'main');
-  const bad=fixture();bad.context.channel='main';bad.options.loadFrozenPlan=()=>({...p,channel:'dev'});bad.g.head=()=>candidate.commit;
+  const bad=fixture();bad.context.channel='main';bad.producer.head_branch='main';bad.options.loadFrozenPlan=()=>({...p,channel:'dev'});bad.g.head=()=>candidate.commit;
   await assert.rejects(startPreflight(bad.g,bad.context,bad.options));assert.equal(bad.posts,0);
 });
