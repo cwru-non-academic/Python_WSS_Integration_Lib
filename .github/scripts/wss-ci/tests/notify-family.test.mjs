@@ -85,6 +85,47 @@ function authenticatedFixture(){
   delete f.loadFrozenPlan;return f;
 }
 test('production loader authenticates distinct channel authority from producer artifact and immutable policy',()=>{const f=authenticatedFixture();assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);});
+for(const channel of ['dev','main'])test(`${channel} committed library CI wakes receipts and a completed receipt wakes the stage`,()=>{
+  const f=fixture('python',channel);
+  f.stage.application_fanout='after-integration-receipts';
+  f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}}};
+  assert.equal(prepareFamilyWakeup(f.g,f.context,f).receipt_reconciliation,true);
+  f.run.path='.github/workflows/release-receipt.yml';
+  const wake=prepareFamilyWakeup(f.g,f.context,f);
+  assert.equal(wake.needed,true);
+  assert.equal(wake.receipt_reconciliation,undefined);
+});
+for(const channel of ['dev','main'])test(`${channel} app merge, normal CI and receipt wake the same acceptance controller`,()=>{
+  const f=fixture('python',channel),app=targetForChannel(profiles['python-cli'].target,channel);
+  const repo=app.repository,workflowPath=`${repo}/.github/workflows/notify-core-stage.yml`;
+  f.p.manifest.workflow_authority='executed-source';rehash(f);
+  f.stage.application_fanout='after-integration-receipts';
+  f.pr.base.repo.full_name=f.pr.head.repo.full_name=repo;
+  f.context={...f.context,repository:repo,workflowRef:`${workflowPath}@refs/heads/${channel}`};
+  f.g.object=(_repo,_ref,path)=>{
+    assert.equal(path,app.parents['python-wrapper']);
+    return {type:'commit',mode:'160000',sha:f.pr.merge_commit_sha};
+  };
+  assert.equal(prepareFamilyWakeup(f.g,f.context,f).receipt_reconciliation,true);
+  f.context={...f.context,eventName:'workflow_run',event:{workflow_run:{id:4}},workflowRef:`${workflowPath}@refs/heads/main`};
+  f.run.repository.full_name=f.run.head_repository.full_name=repo;
+  for(const path of [app.workflow,'.github/workflows/release-receipt.yml']){
+    f.run.path=path;
+    assert.equal(prepareFamilyWakeup(f.g,f.context,f).receipt_reconciliation,true);
+  }
+  f.g.object=()=>({type:'commit',mode:'160000',sha:sha(9)});
+  assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/accepted integration gitlink/);
+});
+test('execution-source policy runs dev merge notifications from the dev base without comparing workflow trees',()=>{
+  const f=authenticatedFixture();
+  f.p.manifest.workflow_authority=f.reviewed.workflow_authority='executed-source';
+  rehash(f);
+  f.context.workflowRef=f.context.workflowRef.replace('/main','/dev');
+  f.g.object=()=>{throw Error('Notification should not read frozen Git trees');};
+  assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);
+  f.context.workflowRef=f.context.workflowRef.replace('/dev','/main');
+  assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/current trusted main/);
+});
 for(const [label,change] of [
   ['rehashed unreviewed policy',f=>{f.p.manifest.workflow_snapshot_policy='unknown';rehash(f);}],
   ['foreign producer repository',f=>{const base=f.g.run;f.g.run=r=>r===core?{...base(r),repository:{full_name:'other/repo'}}:base(r);}],
