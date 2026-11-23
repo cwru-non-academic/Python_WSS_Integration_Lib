@@ -23,12 +23,19 @@ function fixture(channel='dev') {
   const writer={command:args=>{calls.push(args);return 'https://github.com/example/pull/1';}};
   const loadFrozenPlan=()=>({channel,candidate:c.candidate,manifest:JSON.parse(readFileSync(resolve(process.env.WSS_CORE_REFERENCE||'.ci-reference/Core',`tools/release/targets.${channel}.json`)))});
   const authorize=()=>calls.push(['canonical-Core-guard']);
-  return {c,env,state,g,git,writer,calls,loadFrozenPlan,authorize};
+  const authorizeApplication=()=>calls.push(['all-library-receipts']);
+  return {c,env,state,g,git,writer,calls,loadFrozenPlan,authorize,authorizeApplication};
 }
 test('one publication engine pushes without force and creates only draft dev PR',async()=>{
   const f=fixture();await publishPromotion(f.c,f);
   const push=f.calls.find(args=>args.includes('push'));assert.ok(push);assert.ok(!push.includes('--force'));
   const pr=f.calls.find(args=>args[0]==='pr');assert.ok(pr.includes('--draft'));assert.equal(pr[pr.indexOf('--base')+1],'dev');
+});
+for(const channel of ['dev','main'])test(`${channel} cannot create an application PR while library receipts are pending`,async()=>{
+  const f=fixture(channel);
+  f.authorizeApplication=()=>{throw Error('Waiting for verified library receipts');};
+  await assert.rejects(publishPromotion(f.c,f),/Waiting for verified library receipts/);
+  assert.ok(!f.calls.some(args=>args.includes('push')||args[0]==='pr'));
 });
 test('orphan branches and moved sources cannot produce a write',async()=>{
   for(const mutate of [f=>f.state.refs=[{ref:`refs/heads/${f.c.branch}`,object:{sha:sha(7)}}],f=>f.state.moved=true]) {
