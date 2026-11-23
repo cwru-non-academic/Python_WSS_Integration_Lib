@@ -32,10 +32,14 @@ if ($Role -ceq 'wrapper') {
     $projection=New-PythonProjection (Join-Path $WorkRoot 'resolved/extracted/WSS-Universal') $RepositoryRoot (Join-Path $WorkRoot 'projection') $candidate
     $current=Get-Content -LiteralPath (Join-Path $RepositoryRoot '.github/python-candidate.json') -Raw | ConvertFrom-Json
     Assert-PythonProjection (Join-Path $RepositoryRoot $PythonPluginPath) $current
-    if ($current.projection_sha256 -ceq $projection.projection_sha256) {
+    Assert-PythonCandidate $current.candidate
+    if ([bigint]$candidate.run_id -lt [bigint]$current.candidate.run_id) { throw 'Candidate producer run would roll back the recorded dependency.' }
+    if ($current.candidate.run_id -ceq $candidate.run_id) {
+        Assert-PythonSameCandidate $current.candidate $candidate
+        if ($current.projection_sha256 -cne $projection.projection_sha256) { throw 'Installed payload differs for the same candidate.' }
         @{no_op=$true;role=$Role;source_sha=$source} | ConvertTo-Json | Set-Content (Join-Path $WorkRoot 'prepared.json')
         'no_op=true' >> $env:GITHUB_OUTPUT
-        Write-Output 'Verified identical payload: preserve committed provenance; no artificial PR.'
+        Write-Output 'This exact verified candidate is already installed.'
         exit 0
     }
     $cliSha=Get-PythonHead $PythonCliRepository
