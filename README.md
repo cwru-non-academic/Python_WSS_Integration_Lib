@@ -6,6 +6,12 @@ This repository is the reusable wrapper/library repo. It is intended to be consu
 
 This README contains repository setup, usage and maintenance documentation. The shared [WSS API reference](https://cwru-non-academic.github.io/WSS_Documentation/) covers the API and related implementations.
 
+## Try the library without hardware
+
+For the platform-check baseline, install Python 3.12 and a .NET 9 runtime matching the Python architecture. Follow [Install](#install) and set `PYTHONNET_RUNTIME=coreclr` in the shell that runs Python. For an installed command-line example, see the [Python CLI quickstart](https://github.com/cwru-non-academic/CLI_Python_WSS_Application#first-stimulation) and its `--conformance` check.
+
+The [simulated library example](#library-usage) exercises this checkout in a disposable directory.
+
 ## Repository Layout
 
 - `src/wss_py_wrapper/`: Python package source
@@ -31,22 +37,36 @@ DLL discovery walks upward looking for `Cs_Libraries/` from the package location
 
 ## Library Usage
 
+Run this from the repository root after installing the library. It loads the
+pinned DLLs and copies example settings into a temporary directory for an
+in-memory session.
+
 ```python
 from pathlib import Path
+from shutil import copytree
+from tempfile import TemporaryDirectory
 
 from wss_py_wrapper import StimulationController, WssConfig
 
-
-config = WssConfig.default(Path(__file__))
-controller = StimulationController(config)
-controller.Initialize()
-
-controller.StartStimulation()
-controller.StimWithMode("index", 0.25)
-controller.StopStimulation()
-
-controller.Shutdown()
+with TemporaryDirectory(prefix="wss-sim-") as temp:
+    directory = Path(temp)
+    copytree(Path.cwd() / "Config", directory / "Config")
+    config = WssConfig(
+        config_path=directory / "Config",
+        cs_lib_dir=Path.cwd() / "Cs_Libraries",
+        log_path=directory / "wss.log",
+        test_mode=True,
+    )
+    controller = StimulationController(config)
+    try:
+        controller.Initialize()
+        print("Controller initialized in test mode. Device setup is asynchronous.")
+    finally:
+        controller.Shutdown()
 ```
+
+Use the application quickstart for an interactive simulated session, including
+waiting for setup and sending a command.
 
 ## Submodule Usage
 
