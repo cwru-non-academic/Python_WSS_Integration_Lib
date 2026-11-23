@@ -50,10 +50,10 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
   plan(p);targetPolicy(p,t.id);
   const main=context.channel==='main';
   const executedSource=p.manifest.workflow_authority==='executed-source';
-  // A PR-target workflow runs from the PR's base, while workflow_run uses main.
-  const workflowRef=executedSource&&c.eventName==='pull_request_target'?context.ref:'refs/heads/main';
-  requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@${workflowRef}`&&
-    (executedSource||c.sourceSha===g.head(c.repository,'main')),'Notification must execute its current trusted main or PR base workflow');
+  // Both hosted triggers use the default branch workflow. The verified PR or
+  // completed run supplies the channel being promoted, independently of main.
+  requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/main`&&
+    (executedSource||c.sourceSha===g.head(c.repository,'main')),'Notification must execute its current trusted main workflow');
   // Legacy campaigns retain their original notification checks. New campaigns
   // already bind this notifier to its registered workflow and exact checkout.
   if(!wrapper&&!executedSource)return {needed:false,reason:'Earlier campaigns do not use application notifications.'};

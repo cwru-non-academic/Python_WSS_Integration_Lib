@@ -101,7 +101,7 @@ for(const channel of ['dev','main'])test(`${channel} app merge, normal CI and re
   f.p.manifest.workflow_authority='executed-source';rehash(f);
   f.stage.application_fanout='after-integration-receipts';
   f.pr.base.repo.full_name=f.pr.head.repo.full_name=repo;
-  f.context={...f.context,repository:repo,workflowRef:`${workflowPath}@refs/heads/${channel}`};
+  f.context={...f.context,repository:repo,workflowRef:`${workflowPath}@refs/heads/main`};
   f.g.object=(_repo,_ref,path)=>{
     assert.equal(path,app.parents['python-wrapper']);
     return {type:'commit',mode:'160000',sha:f.pr.merge_commit_sha};
@@ -116,14 +116,14 @@ for(const channel of ['dev','main'])test(`${channel} app merge, normal CI and re
   f.g.object=()=>({type:'commit',mode:'160000',sha:sha(9)});
   assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/accepted integration gitlink/);
 });
-test('execution-source policy runs dev merge notifications from the dev base without comparing workflow trees',()=>{
+test('execution-source policy uses the default main workflow for dev merges without comparing workflow trees',()=>{
   const f=authenticatedFixture();
   f.p.manifest.workflow_authority=f.reviewed.workflow_authority='executed-source';
   rehash(f);
-  f.context.workflowRef=f.context.workflowRef.replace('/main','/dev');
+  assert.equal(f.pr.base.ref,'dev');
   f.g.object=()=>{throw Error('Notification should not read frozen Git trees');};
   assert.equal(prepareFamilyWakeup(f.g,f.context,f).needed,true);
-  f.context.workflowRef=f.context.workflowRef.replace('/dev','/main');
+  f.context.workflowRef=f.context.workflowRef.replace('/main','/dev');
   assert.throws(()=>prepareFamilyWakeup(f.g,f.context,f),/current trusted main/);
 });
 for(const [label,change] of [
