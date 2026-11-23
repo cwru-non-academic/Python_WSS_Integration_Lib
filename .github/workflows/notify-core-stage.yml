@@ -1,10 +1,10 @@
-name: Notify verified integration stage
+name: Notify WSS promotion coordinator
 on:
   pull_request_target:
     types: [closed]
     branches: [dev, main]
   workflow_run:
-    workflows: [WSS integration compatibility, Verify release acceptance]
+    workflows: [WSS integration compatibility, CLI CI, GUI CI, ROS CI, Verify release acceptance]
     types: [completed]
     branches: [dev, main]
 permissions:
@@ -12,11 +12,11 @@ permissions:
   actions: read
   pull-requests: read
 concurrency:
-  group: notify-core-integration-stage
+  group: notify-core-promotion
   cancel-in-progress: false
 jobs:
   notify:
-    name: Wake the trusted coordinator for this integration
+    name: Wake the trusted coordinator
     if: >-
       (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true &&
        github.event.pull_request.user.type == 'Bot' && github.event.pull_request.head.repo.full_name == github.repository) ||

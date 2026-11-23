@@ -15,9 +15,9 @@ const targets=JSON.parse(readFileSync(new URL('./staging-targets.json',import.me
 const same=(a,b)=>canonical(a)===canonical(b);
 function json(g,path){const file=g.get(path);requireThat(file.type==='file'&&file.encoding==='base64','Expected immutable policy/record');return JSON.parse(Buffer.from(file.content,'base64'));}
 export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainWorkflowAuthority,env=process.env}={}) {
-  const profile=Object.values(profiles).find(p=>p.role==='wrapper'&&p.target.repository===c.repository);
-  requireThat(profile,'Only registered integrations may notify the stage');
-  const t=profile.target,source=targets[profile.family];let head,pr,context,completedWorkflow;
+  const profile=Object.values(profiles).find(p=>p.target.repository===c.repository);
+  requireThat(profile,'Only registered receivers may notify the coordinator');
+  const t=profile.target,source=targets[profile.family],wrapper=profile.role==='wrapper';let head,pr,context,completedWorkflow;
   // Both events execute the workflow on the default branch. The event's
   // dependency merge is evidence to inspect, never executable workflow source.
   requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/main` && c.sourceSha===g.head(c.repository,'main'),'Notification must execute current trusted main');
@@ -40,13 +40,20 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
     requireThat(Date.parse(run.created_at)>=Date.parse(pr.merged_at),'CI predates the actual dependency merge');
   }else throw Error('Unsupported integration notification event');
   requireThat(pr.merged===true&&pr.state==='closed'&&pr.merge_commit_sha===head&&pr.base?.ref===context.branch&&pr.base?.repo?.full_name===c.repository&&pr.head?.repo?.full_name===c.repository&&pr.user?.type==='Bot'&&pr.merged_by?.type==='User'&&g.head(c.repository,context.branch)===head,'Notification requires the current human-reviewed bot dependency merge');
-  const record=json(g,`repos/${c.repository}/contents/${source.record}?ref=${head}`);candidate(record.candidate);
+  let recordRef=head;
+  if(!wrapper) {
+    const link=g.object(c.repository,head,t.parents[profile.wrapper]);
+    requireThat(link.type==='commit'&&link.mode==='160000'&&g.head(source.repository,context.branch)===link.sha,'Notification requires the accepted integration gitlink');
+    recordRef=link.sha;
+  }
+  const record=json(g,`repos/${source.repository}/contents/${source.record}?ref=${recordRef}`);candidate(record.candidate);
   const p=loadFrozenPlan(g,record.candidate.run_id);
   requireThat(p.channel===context.channel&&same(record.candidate,p.candidate)&&g.head(CORE,context.branch)===p.candidate.commit,'Notification candidate or Core source moved');
   plan(p);targetPolicy(p,t.id);
   const main=context.channel==='main';
   // Legacy campaigns retain their original notification checks. New campaigns
   // already bind this notifier to its registered workflow and exact checkout.
+  if(!wrapper&&p.manifest.workflow_authority!=='executed-source')return {needed:false,reason:'Earlier campaigns do not use application notifications.'};
   if(p.manifest.workflow_authority!=='executed-source') {
     const schema=main?'wss-workflow-snapshots/v2':'wss-workflow-snapshots/v1';
     const snapshots=p.workflow_snapshots,authority=snapshots?.targets?.[t.id+(main?':execution-authority':':main')];
@@ -71,15 +78,17 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan,authorize=mainW
   }
   const policy=json(g,`repos/${CORE}/contents/${context.stagePolicy}?ref=${p.candidate.commit}`);
   const family=policy.libraries?.find(lib=>lib.id===profile.family);
-  requireThat(policy.schema===context.stageSchema&&policy.channel===context.channel&&family?.repository===c.repository&&family.record===source.record&&same(family.applications,source.applications),'Unreviewed family stage policy');
+  requireThat(policy.schema===context.stageSchema&&policy.channel===context.channel&&family?.repository===source.repository&&family.record===source.record&&same(family.applications,source.applications)&&
+    (wrapper||family.applications.includes(c.repository)),'Unreviewed family stage policy');
   const requiresReceipts=policy.application_fanout==='after-integration-receipts';
+  if(!wrapper&&!requiresReceipts)return {needed:false,reason:'Earlier campaigns do not use application notifications.'};
   if(!requiresReceipts&&policy.application_fanout!=='per-integration')return {needed:false,reason:'Earlier frozen policy uses scheduled all-integration staging.'};
   if(!requiresReceipts&&completedWorkflow==='.github/workflows/release-receipt.yml')return {needed:false,reason:'The current stage does not wait for library receipts.'};
   const producer=g.run(CORE,p.candidate.run_id);
   requireThat(producer.repository?.full_name===CORE&&producer.head_repository?.full_name===CORE&&producer.path==='.github/workflows/artifacts.yml'&&producer.head_branch===context.branch&&producer.head_sha===p.candidate.commit&&producer.event==='push'&&producer.status==='completed'&&producer.conclusion==='success','Notification producer is not canonical and successful');
   if(context.channel==='main')authorize({target_id:t.id,repository_root:env.GITHUB_WORKSPACE,candidate:p.candidate},env);
   return {needed:true,producer_run_id:p.candidate.run_id,family:profile.family,...(context.channel==='main'?{channel:'main'}:{}),
-    ...(requiresReceipts&&completedWorkflow===t.workflow?{receipt_reconciliation:true}:{})};
+    ...(requiresReceipts&&(!wrapper||completedWorkflow===t.workflow)?{receipt_reconciliation:true}:{})};
 }
 if(isEntrypoint(import.meta.url)){
   requireThat(process.env.GITHUB_ACTIONS==='true','Notifications execute only trusted hosted workflows');
