@@ -5,8 +5,11 @@ The wrapper loads a set of DLLs using :mod:`pythonnet` and then imports .NET typ
 
 from __future__ import annotations
 
-from pathlib import Path
+import ctypes
+from functools import cache
 import os
+from pathlib import Path
+import platform
 import sys
 from typing import Iterable
 
@@ -102,6 +105,18 @@ def collect_dlls(cs_lib_dir: Path) -> list[Path]:
         dlls = [p for p in dlls if p not in primary] + primary
 
     return dlls
+
+
+@cache
+def load_serial_native(cs_lib_dir: Path) -> None:
+    """Preload the bundled Linux serial library into the Python host."""
+    if sys.platform != "linux" or platform.machine() != "x86_64":
+        return
+    native = cs_lib_dir / "runtimes/linux-x64/native/libSystem.IO.Ports.Native.so"
+    if native.is_file():
+        # Python does not process the payload's .NET runtime asset layout.
+        # Loading the absolute path lets .NET find the library by its SONAME.
+        ctypes.CDLL(str(native.resolve()))
 
 
 def load_ble_backend(cs_lib_dir: Path) -> None:
