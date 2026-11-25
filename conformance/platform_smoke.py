@@ -13,6 +13,7 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+import tempfile
 
 
 def require_native_architecture(expected, machine, clr_process, os_arch, runner_arch, translated):
@@ -135,6 +136,34 @@ def verify_macos_managed(payload: Path) -> None:
         raise RuntimeError("Wrong macOS backend target framework")
 
 
+def verify_linux_serial_open(payload: Path) -> None:
+    from System import UnauthorizedAccessException
+    from System.IO import IOException
+    from System.Threading import CancellationToken
+    from wss_py_wrapper import StimulationController, WssConfig
+
+    with tempfile.TemporaryDirectory(prefix="wss-ci-serial-") as directory:
+        config = Path(directory)
+        port = Path("/dev") / config.name
+        if port.exists():
+            raise RuntimeError(f"Expected a nonexistent diagnostic port: {port}")
+        controller = StimulationController(WssConfig(
+            config_path=config, log_path=config / "host.log",
+            cs_lib_dir=payload, serial_port=str(port),
+        ))
+        controller._load_dotnet()
+        transport = controller._create_transport()
+        try:
+            transport.ConnectAsync(getattr(CancellationToken, "None")).GetAwaiter().GetResult()
+        except (UnauthorizedAccessException, IOException) as error:
+            if str(port) not in str(error):
+                raise
+        else:
+            raise AssertionError(f"Unexpectedly opened {port}")
+        finally:
+            transport.Dispose()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--payload", type=Path, required=True)
@@ -170,6 +199,11 @@ def main() -> None:
         raise RuntimeError(f"Wrong Ports runtime loaded: {loaded}; expected {expected}")
     if clr.GetClrType(SerialPort).Assembly.GetName().Version.Major != 8:
         raise RuntimeError("Expected System.IO.Ports 8")
+    serial_probe = "construction only"
+    if sys.platform == "linux" and execution_identity["architecture"] == "x64":
+        verify_linux_serial_open(args.payload)
+        serial_probe = "native open reached; nonexistent port rejected"
+        print(f"PASS: Linux Serial {serial_probe}")
     if args.cli:
         import wss_cli.main
 
@@ -216,7 +250,7 @@ def main() -> None:
         finally:
             transport.Dispose()
     args.output.write_text(json.dumps({**execution_identity, "contract": args.contract, "macos_ble_declared": macos_declared,
-                                      "ble": ble_status, "cli_routing": ble_routing,
+                                      "ble": ble_status, "cli_routing": ble_routing, "serial": serial_probe,
                                       "physical_io": False}, indent=2))
     print(f"BLE: {ble_status}")
     print(f"PASS: installed Python loader selected {loaded}; Serial construction without opening hardware")
