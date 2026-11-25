@@ -13,7 +13,7 @@ import time
 
 from .config import WssConfig
 from .log_sink import FileLogSink, install_csharp_log_sink
-from .wss_loader import WssLoader, collect_dlls, load_ble_backend
+from .wss_loader import WssLoader, collect_dlls, load_ble_backend, load_serial_native
 
 
 def _resolve_log_type():
@@ -727,6 +727,7 @@ class StimulationController:
 
         transport_class = self._net_types["SerialPortTransport"]
         if "SerialPortTransportOptions" in self._net_types:
+            load_serial_native(self._config.cs_lib_dir)
             options = self._net_types["SerialPortTransportOptions"]()
             options.PortName = self._config.serial_port or ""
             options.AutoSelectPort = not bool(self._config.serial_port)
